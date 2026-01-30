@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel flow</title>
+    <style>
+        html, body { height: 100%; margin: 0; font-family: Arial, sans-serif; }
+        #canvas-container { width: 100%; height: 100vh; display: block; position: relative; }
+        #controls { position: absolute; left: 50%; transform: translateX(-50%); bottom: 20px; display: flex; gap: 10px; }
+        .color-btn { width: 40px; height: 40px; border-radius: 6px; border: 2px solid rgba(0,0,0,0.2); cursor: pointer; }
+        .color-btn:focus { outline: 2px solid #fff; }
+        #hint { position: absolute; left: 10px; top: 10px; background: rgba(0,0,0,0.4); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+        
+        /* Mobile Responsiveness */
+        @media (max-width: 768px) {
+            #hint { font-size: 11px; padding: 5px 8px; left: 8px; top: 8px; }
+            .color-btn { width: 35px; height: 35px; }
+            #controls { bottom: 15px; gap: 8px; }
+        }
+        
+        @media (max-width: 480px) {
+            #hint { font-size: 10px; padding: 4px 6px; left: 5px; top: 5px; }
+            .color-btn { width: 30px; height: 30px; }
+            #controls { bottom: 12px; gap: 6px; }
+        }
+        
+        /* Landscape orientation adjustments */
+        @media (max-height: 500px) and (orientation: landscape) {
+            #hint { font-size: 10px; padding: 4px 6px; }
+            .color-btn { width: 28px; height: 28px; }
+            #controls { bottom: 10px; gap: 5px; }
+        }
+        
+        /* Touch device optimizations */
+        @media (hover: none) and (pointer: coarse) {
+            .color-btn { width: 45px; height: 45px; }
+            #hint { padding: 8px 12px; }
+        }
+        
+        /* Prevent text selection on long touches */
+        * { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+        canvas { display: block; }
+    </style>
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.153.0/build/three.module.js"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="canvas-container">
+        <div id="hint">Click a pig to move</div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { GLTFLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/GLTFLoader.js';
+        import { FBXLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/FBXLoader.js';
+        import { OrbitControls } from 'https://unpkg.com/three@0.153.0/examples/jsm/controls/OrbitControls.js';
+
+        const container = document.getElementById('canvas-container');
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0xf0f0f0);
+
+        // Suppress FBXLoader warnings
+        const originalWarn = console.warn;
+        console.warn = function(...args) {
+            const message = args[0]?.toString() || '';
+            // Suppress FBXLoader-specific warnings about unknown materials and polygon types
+            if (message.includes('THREE.FBXLoader: unknown material type') || 
+                message.includes('Polygons with more than four sides')) {
+                return;
+            }
+            originalWarn.apply(console, args);
+        };
+
+        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+        // Fixed camera matching reference composition
+        camera.position.set(0, 20, 15);
+        camera.lookAt(0, 0.5, 0);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(container.clientWidth, container.clientHeight);
+        renderer.outputColorSpace = THREE.SRGBColorSpace;
+        renderer.shadowMap.enabled = true;
+        container.appendChild(renderer.domElement);
+
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.08;
+        // Lock view: disable zoom, pan and rotate so scene matches reference
+        controls.enableZoom = false;
+        controls.enablePan = false;
+        controls.enableRotate = false;
+
+        const hemi = new THREE.HemisphereLight(0xffffee, 0x444444, 0.6);
+        scene.add(hemi);
+
+        const dir = new THREE.DirectionalLight(0xffffff, 1.0);
+        dir.position.set(5, 10, 7.5);
+        dir.castShadow = true;
+        dir.shadow.camera.top = 10;
+        dir.shadow.camera.bottom = -10;
+        dir.shadow.camera.left = -10;
+        dir.shadow.camera.right = 10;
+        scene.add(dir);
+
+        const ground = new THREE.Mesh(
+            new THREE.PlaneGeometry(20, 20),
+            new THREE.MeshStandardMaterial({ color: 0xeeeeee })
+        );
+        ground.rotation.x = -Math.PI / 2;
+        ground.receiveShadow = true;
+        scene.add(ground);
+
+        const loader = new GLTFLoader();
+        const colors = ['#ffb6c1','#ff4d4d','#4da6ff','#66cc66','#ffd24d','#b266ff'];
+        const colorNames = ['Pink', 'Red', 'Blue', 'Green', 'Yellow', 'Purple'];
+        const GRID = 3;
+        const pigs = [];
+        const occupancy = Array.from({length: GRID}, () => Array(GRID).fill(null));
+        let tiles = [];
+        let tileOccupancy = [];
+        let spacingGlobal = 1.2;
+        const pickable = [];
+        const activeAnims = [];
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        const clock = new THREE.Clock();
+
+
+function createPigLabel(text) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    // Matching the game reference style: Bold white with thick black outline
+    const fontSize = 150;
+    // Use "Arial Black" or "Impact" for that chunky game look
+    ctx.font = `bold ${fontSize}px Arial Black, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // 1. Draw Thick Black Outline
+    ctx.strokeStyle = '#000000';
+    ctx.lineWidth = 28; 
+    ctx.lineJoin = 'round';
+    ctx.strokeText(text, 128, 128);
+
+    // 2. Draw White Text Fill
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, 128, 128);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const spriteMaterial = new THREE.SpriteMaterial({ 
+        map: texture, 
+        transparent: true,
+        depthTest: false // Ensures label stays visible on top
+    });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    
+    // Size relative to pig (may need adjusting)
+    sprite.scale.set(4, 4, 1); 
+    return sprite;
+}
+
+        loader.load('pig.glb', function(gltf) {
+            const base = gltf.scene;
+
+            // Compute scale based on original model size, so every clone uses same scale
+            const baseBox = new THREE.Box3().setFromObject(base);
+            const baseSize = baseBox.getSize(new THREE.Vector3());
+            const maxDim = Math.max(baseSize.x, baseSize.y, baseSize.z);
+            const scale = 1.2 / maxDim;
+
+            const grid = GRID;
+            const spacing = Math.max(maxDim * scale * 1.6, 1.2);
+            spacingGlobal = spacing;
+            let idx = 0;
+
+            for (let row = 0; row < grid; row++) {
+                for (let col = 0; col < grid; col++) {
+                    // Clone the model and ensure materials are unique per mesh
+                    const clone = base.clone(true);
+
+                    clone.traverse((node) => {
+                        if (node.isMesh) {
+                            node.castShadow = true;
+                            node.receiveShadow = true;
+                            if (Array.isArray(node.material)) {
+                                node.material = node.material.map(m => m.clone());
+                            } else if (node.material) {
+                                node.material = node.material.clone();
+                            }
+                            // make meshes pickable and reference their parent clone
+                            pickable.push(node);
+                            node.userData.parentPig = clone;
+                        }
+                    });
+
+                    clone.scale.setScalar(scale);
+
+                    // compute bounding box for clone to place on ground
+                    const box = new THREE.Box3().setFromObject(clone);
+                    const center = box.getCenter(new THREE.Vector3());
+                    // Move clone so it's centered around origin horizontally
+                    clone.position.x += -center.x;
+
+                    // position in grid (centered) - moved lower in Z for mobile layout
+                    const x = (col - Math.floor(grid/2)) * spacing;
+                    const z = (row - Math.floor(grid/2)) * spacing + 7; // Push pigs down
+                    clone.position.x += x;
+                    clone.position.z = z;
+
+                    // adjust Y so feet touch ground
+                    box.setFromObject(clone);
+                    const yOffset = -box.min.y;
+                    clone.position.y += yOffset + 0.01;
+
+                    // rotate to 90° (face +X direction)
+                    clone.rotation.y = Math.PI / 2;
+
+                    // Assign values like the image (alternating 20 and 40)
+const pigValue = (idx % 2 === 0) ? "20" : "40";
+const label = createPigLabel(pigValue);
+
+// Position label on the pig's back
+// Since we are using a Sprite, it will always face the camera
+label.position.set(0, 4, 0); // Adjust Y based on the height of your pig model
+label.renderOrder = 999; 
+clone.add(label); 
+
+                    // apply color from list (cycle through colors)
+                    const color = colors[idx % colors.length];
+                    clone.traverse((node) => {
+                        if (node.isMesh && node.material) {
+                            if (Array.isArray(node.material)) {
+                                node.material.forEach(m => { if (m.color) m.color.set(color); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true; });
+                            } else {
+                                const m = node.material; if (m.color) m.color.set(color); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true;
+                            }
+                        }
+                    });
+
+                    // tag grid coords and register
+                    clone.userData.gridRow = row;
+                    clone.userData.gridCol = col;
+                    clone.userData.moving = false;
+                    pigs.push(clone);
+                    occupancy[row][col] = clone;
+
+                    scene.add(clone);
+                    idx++;
+                }
+            }
+
+            // Create 5 tiles below thread mill, above pig grid (centered horizontally)
+            tiles = [];
+            const tileCount = 5;
+            const tileSize = Math.min(spacing * 0.9, 1.2);
+            const tileHeight = 0.06;
+            // z position: between thread mill and pig grid with more separation
+            const zTiles = 3;
+            tileOccupancy = Array(tileCount).fill(null);
+            for (let i = 0; i < tileCount; i++) {
+                const geom = new THREE.BoxGeometry(tileSize, tileHeight, tileSize);
+                const mat = new THREE.MeshStandardMaterial({ color: 0xcccccc });
+                const tile = new THREE.Mesh(geom, mat);
+                tile.receiveShadow = true;
+                tile.castShadow = false;
+                tile.position.x = (i - Math.floor(tileCount/2)) * spacing;
+                tile.position.z = zTiles;
+                tile.position.y = tileHeight / 2 + 0.01;
+                scene.add(tile);
+                tiles.push(tile);
+            }
+
+        }, undefined, function(err){
+            console.error('Error loading pig.glb', err);
+        });
+
+        // Create quilted/padded texture for thread mill
+        function createQuiltedTexture() {
+            const canvas = document.createElement('canvas');
+            canvas.width = 512;
+            canvas.height = 512;
+            const ctx = canvas.getContext('2d');
+            
+            // Base color (light gray-blue like in the image)
+            ctx.fillStyle = '#a8a9b5';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw quilted diamond pattern
+            const gridSize = 32;
+            const lineWidth = 2;
+            
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
+            ctx.lineWidth = lineWidth;
+            
+            for (let y = 0; y < canvas.height; y += gridSize) {
+                for (let x = 0; x < canvas.width; x += gridSize) {
+                    // Draw diamond pattern
+                    ctx.beginPath();
+                    ctx.moveTo(x + gridSize / 2, y);
+                    ctx.lineTo(x + gridSize, y + gridSize / 2);
+                    ctx.lineTo(x + gridSize / 2, y + gridSize);
+                    ctx.lineTo(x, y + gridSize / 2);
+                    ctx.closePath();
+                    ctx.stroke();
+                    
+                    // Add shading for 3D effect
+                    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
+                    ctx.beginPath();
+                    ctx.moveTo(x + gridSize / 2, y);
+                    ctx.lineTo(x + gridSize / 2 + 5, y + 5);
+                    ctx.lineTo(x + gridSize / 2, y + gridSize / 2);
+                    ctx.lineTo(x + gridSize / 2 - 5, y + 5);
+                    ctx.closePath();
+                    ctx.fill();
+                    
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
+                    ctx.beginPath();
+                    ctx.moveTo(x + gridSize / 2, y + gridSize);
+                    ctx.lineTo(x + gridSize / 2 + 5, y + gridSize - 5);
+                    ctx.lineTo(x + gridSize / 2, y + gridSize / 2);
+                    ctx.lineTo(x + gridSize / 2 - 5, y + gridSize - 5);
+                    ctx.closePath();
+                    ctx.fill();
+                }
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.magFilter = THREE.LinearFilter;
+            texture.minFilter = THREE.LinearMipmapLinearFilter;
+            return texture;
+        }
+
+        // Load Thread mill FBX at the top/front of the layout
+        const fbxLoader = new FBXLoader();
+        fbxLoader.load('Thread mill.fbx', function(object) {
+            object.scale.set(.3, .3, 0.3); // Adjust scale as needed
+            object.position.z = -3; // Position at front (top of mobile view)
+            object.position.y = 0;
+            object.rotation.y = -Math.PI / 2; // Rotate -45 degrees
+            
+            const quiltedTexture = createQuiltedTexture();
+            
+            object.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                    
+                    // Apply quilted texture to all meshes
+                    if (Array.isArray(node.material)) {
+                        node.material = node.material.map(m => 
+                            new THREE.MeshStandardMaterial({ 
+                                map: quiltedTexture,
+                                color: 0xa8a9b5,
+                                metalness: 0.1,
+                                roughness: 0.7
+                            })
+                        );
+                    } else if (node.material) {
+                        node.material = new THREE.MeshStandardMaterial({
+                            map: quiltedTexture,
+                            color: 0xa8a9b5,
+                            metalness: 0.1,
+                            roughness: 0.7
+                        });
+                    }
+                }
+            });
+            
+            scene.add(object);
+        }, undefined, function(err) {
+            console.error('Error loading Thread mill.fbx', err);
+        });
+
+        // Load Tray FBX on the left corner of thread mill
+        const trayLoader = new FBXLoader();
+        trayLoader.load('Tray_@.fbx', function(trayObject) {
+            trayObject.scale.set(0.15, 0.15, 0.15);
+            trayObject.position.x = -1.8; // Left corner
+            trayObject.position.y = 0;
+            trayObject.position.z = -3; // Align with thread mill
+            trayObject.rotation.y = -Math.PI / 2;
+            
+            trayObject.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                    
+                    // Apply light gray material for tray
+                    if (Array.isArray(node.material)) {
+                        node.material = node.material.map(m => 
+                            new THREE.MeshStandardMaterial({
+                                color: 0xd0d0d0,
+                                metalness: 0.2,
+                                roughness: 0.6
+                            })
+                        );
+                    } else if (node.material) {
+                        node.material = new THREE.MeshStandardMaterial({
+                            color: 0xd0d0d0,
+                            metalness: 0.2,
+                            roughness: 0.6
+                        });
+                    }
+                }
+            });
+            
+            scene.add(trayObject);
+        }, undefined, function(err) {
+            console.error('Error loading Tray_@.fbx', err);
+        });
+
+        // Load Cube_@@.fbx and create 45 cubes inside thread mill with colors
+        const cubeLoader = new FBXLoader();
+        cubeLoader.load('Cube_@@.fbx', function(cubeModel) {
+            const cubeCount = 100;
+            const cubesPerRow = 10;
+            const cubeSpacing = 0.5 ;
+            const cubeScale = 0.05;
+            
+            // Position parameters for thread mill interior
+            const threadMillX = 0.2;
+            const threadMillZ = -3.5;
+            const threadMillY = 0.5;
+            
+            for (let i = 0; i < cubeCount; i++) {
+                const clone = cubeModel.clone(true);
+                
+                clone.traverse((node) => {
+                    if (node.isMesh) {
+                        node.castShadow = true;
+                        node.receiveShadow = true;
+                        
+                        // Apply random color from available colors
+                        const colorIndex = Math.floor(Math.random() * colors.length);
+                        const color = colors[colorIndex];
+                        
+                        if (Array.isArray(node.material)) {
+                            node.material = node.material.map(m => m.clone());
+                            node.material.forEach(m => {
+                                if (m.color) m.color.set(color);
+                                m.needsUpdate = true;
+                            });
+                        } else if (node.material) {
+                            node.material = node.material.clone();
+                            if (node.material.color) {
+                                node.material.color.set(color);
+                                node.material.needsUpdate = true;
+                            }
+                        }
+                    }
+                });
+                
+                clone.scale.setScalar(cubeScale);
+                
+                // Position in grid (9 columns x 5 rows)
+                const row = Math.floor(i / cubesPerRow);
+                const col = i % cubesPerRow;
+                
+                const offsetX = (col - cubesPerRow / 2) * cubeSpacing;
+                const offsetZ = (row - 2) * cubeSpacing;
+                
+                clone.position.x = threadMillX + offsetX;
+                clone.position.y = threadMillY + row * 0.08;
+                clone.position.z = threadMillZ + offsetZ;
+                
+                scene.add(clone);
+            }
+        }, undefined, function(err) {
+            console.error('Error loading Cube_@@.fbx', err);
+        });
+
+        // Animation helper: add an animation object with update(dt)
+        function addAnim(anim) { activeAnims.push(anim); }
+
+        function tweenPosition(obj, from, to, duration) {
+            return new Promise(resolve => {
+                const anim = {
+                    elapsed: 0,
+                    duration,
+                    update(dt) {
+                        this.elapsed += dt;
+                        const t = Math.min(this.elapsed / this.duration, 1);
+                        obj.position.lerpVectors(from, to, t);
+                        if (t >= 1) { return true; }
+                        return false;
+                    },
+                    finish: resolve
+                };
+                addAnim(anim);   
+            });
+        }
+
+        function runCircle(obj, center, duration, rotations = 2, radius = 0.25) {
+            return new Promise(resolve => {
+                const anim = {
+                    elapsed: 0,
+                    duration,
+                    update(dt) {
+                        this.elapsed += dt;
+                        const t = Math.min(this.elapsed / this.duration, 1);
+                        const angle = t * rotations * Math.PI * 2;
+                        obj.position.x = center.x + Math.cos(angle) * radius;
+                        obj.position.z = center.z + Math.sin(angle) * radius;
+                        obj.rotation.y += dt * 6.0; // spin while running
+                        if (t >= 1) { return true; }
+                        return false;
+                    },
+                    finish: resolve
+                };
+                addAnim(anim);
+            });
+        }
+
+        function processAnims(dt) {
+            for (let i = activeAnims.length - 1; i >= 0; --i) {
+                const a = activeAnims[i];
+                const done = a.update(dt);
+                if (done) {
+                    if (a.finish) a.finish();
+                    activeAnims.splice(i, 1);
+                }
+            }
+        }
+
+        // Jump animation to tile: moves pig from current position to tile center and leaves it there
+        function jumpToTile(pig, tile, duration = 700) {
+            return new Promise(resolve => {
+                const start = pig.position.clone();
+                const end = new THREE.Vector3(tile.position.x, pig.position.y + tile.position.y, tile.position.z);
+                // end.y is pig's current y + tile center y offset (approximate)
+                const arcHeight = Math.max(0.25, spacingGlobal * 0.3);
+                const anim = {
+                    elapsed: 0,
+                    duration,
+                    update(dt) {
+                        this.elapsed += dt;
+                        const t = Math.min(this.elapsed / this.duration, 1);
+                        // horizontal lerp
+                        pig.position.x = THREE.MathUtils.lerp(start.x, end.x, t);
+                        pig.position.z = THREE.MathUtils.lerp(start.z, end.z, t);
+                        // vertical parabola
+                        const y = THREE.MathUtils.lerp(start.y, end.y, t) + arcHeight * 4 * t * (1 - t);
+                        pig.position.y = y;
+                        // small forward rotation while jumping
+                        pig.rotation.x = Math.sin(t * Math.PI) * 0.1;
+                        if (t >= 1) return true;
+                        return false;
+                    },
+                    finish: resolve
+                };
+                addAnim(anim);
+            });
+        }
+
+        // Raycast handler
+        function onPointerDown(event) {
+            const rect = renderer.domElement.getBoundingClientRect();
+            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+            raycaster.setFromCamera(pointer, camera);
+            // Raycast against the whole scene for robustness
+            const intersects = raycaster.intersectObjects(scene.children, true);
+            if (intersects.length === 0) return;
+            const mesh = intersects[0].object;
+            const pig = mesh.userData.parentPig || mesh;
+            if (!pig || pig.userData.moving) return;
+
+            console.log('Clicked pig at grid', pig.userData.gridRow, pig.userData.gridCol);
+
+            const row = pig.userData.gridRow;
+            const col = pig.userData.gridCol;
+
+            // Determine tile index for this column (center tile index = 2 maps col 1 -> tile 2)
+            const tileIndex = col + 1; // mapping pig columns (0..2) to tiles (0..4)
+            if (!tiles || tileIndex < 0 || tileIndex >= tiles.length) return;
+            if (pig.userData.moving) return;
+            if (tileOccupancy[tileIndex]) {
+                console.log('Tile occupied:', tileIndex);
+                return; // tile occupied
+            }
+
+            // Start jump to tile
+            (async () => {
+                pig.userData.moving = true;
+                occupancy[row][col] = null;
+                const targetTile = tiles[tileIndex];
+                await jumpToTile(pig, targetTile, 700);
+                pig.userData.onTile = true;
+                pig.userData.tileIndex = tileIndex;
+                tileOccupancy[tileIndex] = pig;
+                pig.userData.moving = false;
+            })();
+        }
+
+        renderer.domElement.addEventListener('pointerdown', onPointerDown);
+
+        function onWindowResize() {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+        window.addEventListener('resize', onWindowResize);
+        window.addEventListener('orientationchange', onWindowResize);
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const dt = Math.min(clock.getDelta() * 1000, 40); // dt in ms, capped
+            processAnims(dt);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+        animate();
+    </script>
+</body>
+</html>
