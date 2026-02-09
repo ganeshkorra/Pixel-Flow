@@ -404,14 +404,14 @@ function updatePigLabel(pig) {
         // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
         cubeLoader.load('Cube_@@.fbx', (cubeModel) => {
-            const cols = 10;
-            const rows = 12;
-            const cubeSpacing = 0.51;
+            const cols = 12;
+            const rows = 13;
+            const cubeSpacing = 0.44;
 
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
                     const clone = cubeModel.clone(true);
-                    clone.scale.setScalar(0.06);
+                    clone.scale.setScalar(0.05);
 
                     // GROUPING LOGIC: Assign color based on segments of columns
                     // This creates "bands" of grouped colors
@@ -619,7 +619,7 @@ async function shootAtCubes(pig) {
 
     while (pig.userData.moving && pig.userData.value > 0) {
         let closest = null;
-        let minDist = 12;
+        let minDist = 5;
 
         cubesToSmash.forEach((cube, index) => {
             // NEW RULES: Match color AND Must not be blocked by other cubes
@@ -646,6 +646,12 @@ async function shootAtCubes(pig) {
             updatePigLabel(pig);
 
             if (pig.userData.value <= 0) {
+                console.log("Ammo empty! Freeing tile index:", pig.userData.currentTileIndex);
+                const indexToFree = pig.userData.currentTileIndex;
+                if (indexToFree !== undefined && tileOccupancy[indexToFree] === pig) {
+                    tileOccupancy[indexToFree] = null;
+                }
+
                 scene.remove(pig);
                 pig.userData.moving = false;
                 return;
@@ -753,7 +759,7 @@ async function performMillTravel(pig, targetTile) {
     pig.userData.onTile = true;
     pig.userData.moving = false;
 }
-      function onPointerDown(event) {
+    function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -762,10 +768,10 @@ async function performMillTravel(pig, targetTile) {
     const intersects = raycaster.intersectObjects(scene.children, true);
     if (intersects.length === 0) return;
 
-    // FIND THE PIG: Traverse up the tree to find parentPig
     let obj = intersects[0].object;
     let pig = null;
 
+    // Traverse up to find the root pig
     while (obj) {
         if (obj.userData && obj.userData.parentPig) {
             pig = obj.userData.parentPig;
@@ -774,28 +780,40 @@ async function performMillTravel(pig, targetTile) {
         obj = obj.parent;
     }
 
-    // Safety checks
+    // Safety checks: stop if moving or already sitting
     if (!pig || pig.userData.moving || pig.userData.onTile) return;
 
-    const row = pig.userData.gridRow;
-    const col = pig.userData.gridCol;
+    // --- FIX 1: CLEAR VARIABLE NAME ---
+    let targetIndex = -1; 
     
-    // Map column to tile (Example: 0->Tile 1, 1->Tile 2, 2->Tile 3)
-    const tileIndex = col + 1; 
-    
-    if (tileOccupancy[tileIndex]) {
-        console.log("Tile is blocked!");
-        return;
+    // --- FIX 2: CHECK FROM THE LEFT (INDEX 0 TO 4) ---
+    for (let i = 0; i < tileOccupancy.length; i++) {
+        if (tileOccupancy[i] === null) { 
+            targetIndex = i; // Found the first empty white slot!
+            break; 
+        }
     }
 
-    // Release from grid and lock the tile
-    occupancy[row][col] = null;
-    tileOccupancy[tileIndex] = pig;
+    // --- FIX 3: PREVENT CRASH IF ALL 5 TILES FULL ---
+    if (targetIndex === -1) {
+        console.warn("CANNOT MOVE: All 5 process tiles are occupied!");
+        return; 
+    }
 
-    // Start the assembly line journey
-    performMillTravel(pig, tiles[tileIndex]);
+    // SUCCESS - SEND PIG
+    const row = pig.userData.gridRow;
+    const col = pig.userData.gridCol;
+
+    // Update global state immediately
+    occupancy[row][col] = null; // Clear spot in 3x3 grid
+    tileOccupancy[targetIndex] = pig; // Lock the landing tile index
+    pig.userData.currentTileIndex = targetIndex; // SAVE THE INDEX HERE
+
+    console.log("Sending pig to Tile Index:", targetIndex);
+    
+    // Start the movement sequence to that specific tile
+    performMillTravel(pig, tiles[targetIndex]);
 }
-
         renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
         function onWindowResize() {
