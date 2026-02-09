@@ -127,12 +127,12 @@
         let spacingGlobal = 1.2;
         const pickable = [];
         const activeAnims = [];
+        const cubesToSmash = [];
         const raycaster = new THREE.Raycaster();
         const pointer = new THREE.Vector2();
         const clock = new THREE.Clock();
 
-
-function createPigLabel(text) {
+function createPigLabelTexture(text) {
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
@@ -140,7 +140,6 @@ function createPigLabel(text) {
 
     // Matching the game reference style: Bold white with thick black outline
     const fontSize = 150;
-    // Use "Arial Black" or "Impact" for that chunky game look
     ctx.font = `bold ${fontSize}px Arial Black, sans-serif`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
@@ -155,17 +154,31 @@ function createPigLabel(text) {
     ctx.fillStyle = '#ffffff';
     ctx.fillText(text, 128, 128);
 
-    const texture = new THREE.CanvasTexture(canvas);
+    return new THREE.CanvasTexture(canvas);
+}
+
+function createPigLabel(pig) {
+    const text = pig.userData.value.toString();
+    const texture = createPigLabelTexture(text);
     const spriteMaterial = new THREE.SpriteMaterial({ 
         map: texture, 
         transparent: true,
-        depthTest: false // Ensures label stays visible on top
+        depthTest: false
     });
     const sprite = new THREE.Sprite(spriteMaterial);
-    
-    // Size relative to pig (may need adjusting)
-    sprite.scale.set(4, 4, 1); 
+    sprite.scale.set(4, 4, 1);
     return sprite;
+}
+
+function updatePigLabel(pig) {
+    const text = pig.userData.value.toString();
+    const texture = createPigLabelTexture(text);
+    const label = pig.children.find(child => child.isSprite);
+    if (label) {
+        label.material.map.dispose();
+        label.material.map = texture;
+        label.material.needsUpdate = true;
+    }
 }
 
         loader.load('pig.glb', function(gltf) {
@@ -225,17 +238,21 @@ function createPigLabel(text) {
                     clone.rotation.y = Math.PI / 2;
 
                     // Assign values like the image (alternating 20 and 40)
-const pigValue = (idx % 2 === 0) ? "20" : "40";
-const label = createPigLabel(pigValue);
+                    const pigValue = (idx % 2 === 0) ? "20" : "40";
+                    clone.userData.value = parseInt(pigValue);
+                    const label = createPigLabel(clone);
 
-// Position label on the pig's back
-// Since we are using a Sprite, it will always face the camera
-label.position.set(0, 4, 0); // Adjust Y based on the height of your pig model
-label.renderOrder = 999; 
-clone.add(label); 
+                    // Position label on the pig's back
+                    // Since we are using a Sprite, it will always face the camera
+                    label.position.set(0, 4, 0);
+                    label.renderOrder = 999;
+                    clone.add(label);
+                    // Ensure clicking the sprite label resolves back to the pig clone
+                    label.userData.parentPig = clone;
 
                     // apply color from list (cycle through colors)
                     const color = colors[idx % colors.length];
+                    clone.userData.colorName = color; // Save the color hex/name
                     clone.traverse((node) => {
                         if (node.isMesh && node.material) {
                             if (Array.isArray(node.material)) {
@@ -341,7 +358,9 @@ clone.add(label);
 
         // Load Thread mill FBX at the top/front of the layout
         const fbxLoader = new FBXLoader();
+        let threadMillModel = null; // Declare this globally with other variables at top
         fbxLoader.load('Thread mill.fbx', function(object) {
+             threadMillModel = object; // Save reference
             object.scale.set(.3, .3, 0.3); // Adjust scale as needed
             object.position.z = -3; // Position at front (top of mobile view)
             object.position.y = 0;
@@ -380,100 +399,62 @@ clone.add(label);
             console.error('Error loading Thread mill.fbx', err);
         });
 
-        // Load Tray FBX on the left corner of thread mill
-        const trayLoader = new FBXLoader();
-        trayLoader.load('Tray_@.fbx', function(trayObject) {
-            trayObject.scale.set(0.15, 0.15, 0.15);
-            trayObject.position.x = -1.8; // Left corner
-            trayObject.position.y = 0;
-            trayObject.position.z = -3; // Align with thread mill
-            trayObject.rotation.y = -Math.PI / 2;
-            
-            trayObject.traverse((node) => {
-                if (node.isMesh) {
-                    node.castShadow = true;
-                    node.receiveShadow = true;
-                    
-                    // Apply light gray material for tray
-                    if (Array.isArray(node.material)) {
-                        node.material = node.material.map(m => 
-                            new THREE.MeshStandardMaterial({
-                                color: 0xd0d0d0,
-                                metalness: 0.2,
-                                roughness: 0.6
-                            })
-                        );
-                    } else if (node.material) {
-                        node.material = new THREE.MeshStandardMaterial({
-                            color: 0xd0d0d0,
-                            metalness: 0.2,
-                            roughness: 0.6
-                        });
-                    }
-                }
-            });
-            
-            scene.add(trayObject);
-        }, undefined, function(err) {
-            console.error('Error loading Tray_@.fbx', err);
-        });
+  
 
-        // Load Cube_@@.fbx and create 45 cubes inside thread mill with colors
+        // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
-        cubeLoader.load('Cube_@@.fbx', function(cubeModel) {
-            const cubeCount = 100;
-            const cubesPerRow = 10;
-            const cubeSpacing = 0.5 ;
-            const cubeScale = 0.05;
-            
-            // Position parameters for thread mill interior
-            const threadMillX = 0.2;
-            const threadMillZ = -3.5;
-            const threadMillY = 0.5;
-            
-            for (let i = 0; i < cubeCount; i++) {
-                const clone = cubeModel.clone(true);
-                
-                clone.traverse((node) => {
-                    if (node.isMesh) {
-                        node.castShadow = true;
-                        node.receiveShadow = true;
-                        
-                        // Apply random color from available colors
-                        const colorIndex = Math.floor(Math.random() * colors.length);
-                        const color = colors[colorIndex];
-                        
-                        if (Array.isArray(node.material)) {
-                            node.material = node.material.map(m => m.clone());
-                            node.material.forEach(m => {
-                                if (m.color) m.color.set(color);
-                                m.needsUpdate = true;
-                            });
-                        } else if (node.material) {
-                            node.material = node.material.clone();
-                            if (node.material.color) {
-                                node.material.color.set(color);
-                                node.material.needsUpdate = true;
+        cubeLoader.load('Cube_@@.fbx', (cubeModel) => {
+            const cols = 10;
+            const rows = 12;
+            const cubeSpacing = 0.51;
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    const clone = cubeModel.clone(true);
+                    clone.scale.setScalar(0.06);
+
+                    // GROUPING LOGIC: Assign color based on segments of columns
+                    // This creates "bands" of grouped colors
+                    const colorIndex = Math.floor(c / 3) % colors.length;
+                    const color = colors[colorIndex];
+                    
+                    clone.position.set(
+                        (c - cols / 2) * cubeSpacing, 
+                        0.5, 
+                        (r - rows / 2) * cubeSpacing - 2.5
+                    );
+
+                    // Store position index to calculate "blocked" status
+                    clone.userData = {
+                        colorName: color,
+                        gridX: c,
+                        gridZ: r,
+                        blocked: true // Will be calculated below
+                    };
+
+                    clone.traverse(n => {
+                        if (n.isMesh) {
+                            n.castShadow = true;
+                            n.receiveShadow = true;
+                            if (Array.isArray(n.material)) {
+                                n.material = n.material.map(m => m.clone());
+                                n.material.forEach(m => {
+                                    if (m.color) m.color.set(color);
+                                    m.needsUpdate = true;
+                                });
+                            } else if (n.material) {
+                                n.material = n.material.clone();
+                                if (n.material.color) n.material.color.set(color);
+                                n.material.needsUpdate = true;
                             }
                         }
-                    }
-                });
-                
-                clone.scale.setScalar(cubeScale);
-                
-                // Position in grid (9 columns x 5 rows)
-                const row = Math.floor(i / cubesPerRow);
-                const col = i % cubesPerRow;
-                
-                const offsetX = (col - cubesPerRow / 2) * cubeSpacing;
-                const offsetZ = (row - 2) * cubeSpacing;
-                
-                clone.position.x = threadMillX + offsetX;
-                clone.position.y = threadMillY + row * 0.08;
-                clone.position.z = threadMillZ + offsetZ;
-                
-                scene.add(clone);
+                    });
+
+                    scene.add(clone);
+                    cubesToSmash.push(clone);
+                }
             }
+            updateObstacleStatus(); // Determine who is on the outside
         }, undefined, function(err) {
             console.error('Error loading Cube_@@.fbx', err);
         });
@@ -531,75 +512,289 @@ clone.add(label);
             }
         }
 
-        // Jump animation to tile: moves pig from current position to tile center and leaves it there
-        function jumpToTile(pig, tile, duration = 700) {
-            return new Promise(resolve => {
-                const start = pig.position.clone();
-                const end = new THREE.Vector3(tile.position.x, pig.position.y + tile.position.y, tile.position.z);
-                // end.y is pig's current y + tile center y offset (approximate)
-                const arcHeight = Math.max(0.25, spacingGlobal * 0.3);
-                const anim = {
-                    elapsed: 0,
-                    duration,
-                    update(dt) {
-                        this.elapsed += dt;
-                        const t = Math.min(this.elapsed / this.duration, 1);
-                        // horizontal lerp
-                        pig.position.x = THREE.MathUtils.lerp(start.x, end.x, t);
-                        pig.position.z = THREE.MathUtils.lerp(start.z, end.z, t);
-                        // vertical parabola
-                        const y = THREE.MathUtils.lerp(start.y, end.y, t) + arcHeight * 4 * t * (1 - t);
-                        pig.position.y = y;
-                        // small forward rotation while jumping
-                        pig.rotation.x = Math.sin(t * Math.PI) * 0.1;
-                        if (t >= 1) return true;
-                        return false;
-                    },
-                    finish: resolve
-                };
-                addAnim(anim);
+        function updateObstacleStatus() {
+            cubesToSmash.forEach(target => {
+                const x = target.userData.gridX;
+                const z = target.userData.gridZ;
+
+                // Check 4 neighbors
+                const hasN = cubesToSmash.some(o => o.userData.gridX === x && o.userData.gridZ === z - 1);
+                const hasS = cubesToSmash.some(o => o.userData.gridX === x && o.userData.gridZ === z + 1);
+                const hasE = cubesToSmash.some(o => o.userData.gridX === x + 1 && o.userData.gridZ === z);
+                const hasW = cubesToSmash.some(o => o.userData.gridX === x - 1 && o.userData.gridZ === z);
+
+                // If surrounded on all 4 sides, it is an "inside" cube and blocked
+                target.userData.blocked = (hasN && hasS && hasE && hasW);
             });
         }
 
-        // Raycast handler
-        function onPointerDown(event) {
-            const rect = renderer.domElement.getBoundingClientRect();
-            pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
-            pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
-            raycaster.setFromCamera(pointer, camera);
-            // Raycast against the whole scene for robustness
-            const intersects = raycaster.intersectObjects(scene.children, true);
-            if (intersects.length === 0) return;
-            const mesh = intersects[0].object;
-            const pig = mesh.userData.parentPig || mesh;
-            if (!pig || pig.userData.moving) return;
-
-            console.log('Clicked pig at grid', pig.userData.gridRow, pig.userData.gridCol);
-
-            const row = pig.userData.gridRow;
-            const col = pig.userData.gridCol;
-
-            // Determine tile index for this column (center tile index = 2 maps col 1 -> tile 2)
-            const tileIndex = col + 1; // mapping pig columns (0..2) to tiles (0..4)
-            if (!tiles || tileIndex < 0 || tileIndex >= tiles.length) return;
-            if (pig.userData.moving) return;
-            if (tileOccupancy[tileIndex]) {
-                console.log('Tile occupied:', tileIndex);
-                return; // tile occupied
-            }
-
-            // Start jump to tile
-            (async () => {
-                pig.userData.moving = true;
-                occupancy[row][col] = null;
-                const targetTile = tiles[tileIndex];
-                await jumpToTile(pig, targetTile, 700);
-                pig.userData.onTile = true;
-                pig.userData.tileIndex = tileIndex;
-                tileOccupancy[tileIndex] = pig;
-                pig.userData.moving = false;
-            })();
+        function getMouthPosition(pig) {
+            const mouthOffset = new THREE.Vector3(0, 0.4, 0.6); // Front of pig
+            mouthOffset.applyQuaternion(pig.quaternion); // Rotate offset to match pig direction
+            return pig.position.clone().add(mouthOffset);
         }
+
+    // 1. Muzzle Flash Effect (At the Pig)
+function createMuzzleFlash(pos) {
+    const flashGeom = new THREE.SphereGeometry(0.3, 8, 8);
+    const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
+    const flash = new THREE.Mesh(flashGeom, flashMat);
+    flash.position.copy(pos);
+    scene.add(flash);
+
+    addAnim({
+        elapsed: 0, duration: 100,
+        update(dt) {
+            this.elapsed += dt;
+            const t = this.elapsed / this.duration;
+            flash.scale.setScalar(1 + t * 2);
+            flash.material.opacity = 1 - t;
+            if (t >= 1) { scene.remove(flash); return true; }
+            return false;
+        }
+    });
+}
+
+// 2. Impact Shard Effect (At the Cube)
+function createImpactEffect(pos, color) {
+    for (let i = 0; i < 4; i++) {
+        const shard = new THREE.Mesh(
+            new THREE.SphereGeometry(0.08, 4, 4),
+            new THREE.MeshBasicMaterial({ color: color })
+        );
+        shard.position.copy(pos);
+        const velocity = new THREE.Vector3(
+            (Math.random() - 0.5) * 0.1,
+            Math.random() * 0.1,
+            (Math.random() - 0.5) * 0.1
+        );
+        scene.add(shard);
+
+        addAnim({
+            elapsed: 0, duration: 300,
+            update(dt) {
+                this.elapsed += dt;
+                const t = this.elapsed / this.duration;
+                shard.position.add(velocity);
+                shard.scale.setScalar(1 - t);
+                if (t >= 1) { scene.remove(shard); return true; }
+                return false;
+            }
+        });
+    }
+}
+
+// 3. The Sphere Bullet
+function createBullet(pig, to, color) {
+    const from = getMouthPosition(pig);
+    const geom = new THREE.SphereGeometry(0.12, 16, 16);
+    const mat = new THREE.MeshStandardMaterial({ 
+        color: 0xffffff, 
+        emissive: color, 
+        emissiveIntensity: 5 
+    });
+    const bullet = new THREE.Mesh(geom, mat);
+    bullet.position.copy(from);
+    scene.add(bullet);
+
+    addAnim({
+        elapsed: 0, duration: 150,
+        update(dt) {
+            this.elapsed += dt;
+            const t = Math.min(this.elapsed / this.duration, 1);
+            bullet.position.lerpVectors(from, to, t);
+            if (t >= 1) { 
+                createImpactEffect(to, color); // Impact particles
+                scene.remove(bullet); 
+                return true; 
+            }
+            return false;
+        }
+    });
+}
+
+// 4. Refined Combat Loop (The "Siege")
+async function shootAtCubes(pig) {
+    const myColor = pig.userData.colorName;
+
+    while (pig.userData.moving && pig.userData.value > 0) {
+        let closest = null;
+        let minDist = 12;
+
+        cubesToSmash.forEach((cube, index) => {
+            // NEW RULES: Match color AND Must not be blocked by other cubes
+            if (cube.userData.colorName === myColor && !cube.userData.blocked) {
+                const dist = pig.position.distanceTo(cube.position);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closest = { cube, index };
+                }
+            }
+        });
+
+        if (closest) {
+            createMuzzleFlash(getMouthPosition(pig)); 
+            createBullet(pig, closest.cube.position.clone(), myColor);
+            
+            scene.remove(closest.cube);
+            cubesToSmash.splice(closest.index, 1);
+            
+            // Re-calculate who is on the outside now that one cube is gone
+            updateObstacleStatus(); 
+            
+            pig.userData.value--;
+            updatePigLabel(pig);
+
+            if (pig.userData.value <= 0) {
+                scene.remove(pig);
+                pig.userData.moving = false;
+                return;
+            }
+        }
+        await new Promise(r => setTimeout(r, 180)); 
+    }
+}
+
+       // --- Corrected Helper Functions ---
+function moveAlongPoint(obj, target, duration) {
+    return new Promise(resolve => {
+        const start = obj.position.clone();
+        addAnim({
+            elapsed: 0, duration,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                obj.position.lerpVectors(start, target, t);
+                if (t >= 1) return true;
+                return false;
+            },
+            finish: resolve
+        });
+    });
+}
+
+// Function for jumps (parabola)
+function jumpToPoint(obj, target, duration) {
+    return new Promise(resolve => {
+        const start = obj.position.clone();
+        const arcHeight = 2.0; // Higher arc for clearance
+        addAnim({
+            elapsed: 0, duration,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                obj.position.lerpVectors(start, target, t);
+                // Simple parabola
+                obj.position.y = THREE.MathUtils.lerp(start.y, target.y, t) + Math.sin(t * Math.PI) * arcHeight;
+                if (t >= 1) return true;
+                return false;
+            },
+            finish: resolve
+        });
+    });
+}
+
+async function performMillTravel(pig, targetTile) {
+    if (!threadMillModel) return;
+    pig.userData.moving = true;
+
+    // --- Start shooting thread immediately in parallel ---
+    shootAtCubes(pig);
+
+    // KEEPING YOUR VALUES EXACTLY AS IS
+    const h = 0.85; 
+    const mX = threadMillModel.position.x;
+    const mZ = threadMillModel.position.z; 
+
+    // YOUR EXISTING NODES
+    const pEntryStub    = new THREE.Vector3(mX - 2, h, mZ + 4.8);
+    const pFrontRight   = new THREE.Vector3(mX + 3.4, h, mZ + 4.8);
+    const pBackRight    = new THREE.Vector3(mX + 3.4, h, mZ - 2.8);
+    const pBackLeft     = new THREE.Vector3(mX - 3.4, h, mZ - 2.8);
+
+    // --- ADDED PHASE 5: THE BLUE ARROW NODE ---
+    // Moving from the Back-Left corner down the left rail to the tip
+    const pExitTip      = new THREE.Vector3(mX - 3.4, h, mZ + 2.8); 
+    
+    // THE FINAL JUMP TARGET
+    const pFinalTile    = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
+
+    // --- PHASE 1: JUMP IN ---
+    pig.rotation.y = Math.PI / 2; 
+    await jumpToPoint(pig, pEntryStub, 700);
+    if (!pig.parent) return; // Pig might be destroyed if value hits 0!
+
+    // --- PHASE 2: TRAVEL RIGHT ---
+    pig.rotation.y = Math.PI/2; 
+    await moveAlongPoint(pig, pFrontRight, 600);
+    if (!pig.parent) return;
+
+    // --- PHASE 3: TRAVEL UP RIGHT SIDE ---
+    pig.rotation.y = Math.PI; 
+    await moveAlongPoint(pig, pBackRight, 600);
+    if (!pig.parent) return;
+
+    // --- PHASE 4: TRAVEL LEFT ACROSS TOP ---
+    pig.rotation.y = -Math.PI / 2; 
+    await moveAlongPoint(pig, pBackLeft, 800);
+    if (!pig.parent) return;
+
+    // --- PHASE 5: THE BLUE ARROW (MOVE DOWN LEFT RAIL) ---
+    // New step: walk from the back-left corner to the exit tip
+    pig.rotation.y = 0; // Turn to look down toward the arrow tip
+    await moveAlongPoint(pig, pExitTip, 500);
+    if (!pig.parent) return;
+
+    // --- PHASE 6: FINAL JUMP FROM EXIT TO TILE ---
+    pig.rotation.y = Math.PI / 2; 
+    await jumpToPoint(pig, pFinalTile, 700);
+    if (!pig.parent) return;
+
+    pig.userData.onTile = true;
+    pig.userData.moving = false;
+}
+      function onPointerDown(event) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+    pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+    raycaster.setFromCamera(pointer, camera);
+
+    const intersects = raycaster.intersectObjects(scene.children, true);
+    if (intersects.length === 0) return;
+
+    // FIND THE PIG: Traverse up the tree to find parentPig
+    let obj = intersects[0].object;
+    let pig = null;
+
+    while (obj) {
+        if (obj.userData && obj.userData.parentPig) {
+            pig = obj.userData.parentPig;
+            break;
+        }
+        obj = obj.parent;
+    }
+
+    // Safety checks
+    if (!pig || pig.userData.moving || pig.userData.onTile) return;
+
+    const row = pig.userData.gridRow;
+    const col = pig.userData.gridCol;
+    
+    // Map column to tile (Example: 0->Tile 1, 1->Tile 2, 2->Tile 3)
+    const tileIndex = col + 1; 
+    
+    if (tileOccupancy[tileIndex]) {
+        console.log("Tile is blocked!");
+        return;
+    }
+
+    // Release from grid and lock the tile
+    occupancy[row][col] = null;
+    tileOccupancy[tileIndex] = pig;
+
+    // Start the assembly line journey
+    performMillTravel(pig, tiles[tileIndex]);
+}
 
         renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
