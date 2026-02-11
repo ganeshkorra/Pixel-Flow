@@ -131,6 +131,8 @@
         const raycaster = new THREE.Raycaster();
         const pointer = new THREE.Vector2();
         const clock = new THREE.Clock();
+        let basePigModel = null;
+        let globalPigScale = 1.2; // Default, will be updated by loader
 
 function createPigLabelTexture(text) {
     const canvas = document.createElement('canvas');
@@ -182,6 +184,7 @@ function updatePigLabel(pig) {
 }
 
         loader.load('pig.glb', function(gltf) {
+            basePigModel = gltf.scene; // Save reference for cloning new pigs later
             const base = gltf.scene;
 
             // Compute scale based on original model size, so every clone uses same scale
@@ -189,6 +192,7 @@ function updatePigLabel(pig) {
             const baseSize = baseBox.getSize(new THREE.Vector3());
             const maxDim = Math.max(baseSize.x, baseSize.y, baseSize.z);
             const scale = 1.2 / maxDim;
+            globalPigScale = scale; // Save this value for spawning
 
             const grid = GRID;
             const spacing = Math.max(maxDim * scale * 1.6, 1.2);
@@ -404,14 +408,14 @@ function updatePigLabel(pig) {
         // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
         cubeLoader.load('Cube_@@.fbx', (cubeModel) => {
-            const cols = 12;
-            const rows = 13;
-            const cubeSpacing = 0.44;
+            const cols = 20;
+            const rows = 25;
+            const cubeSpacing = 0.24;
 
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
                     const clone = cubeModel.clone(true);
-                    clone.scale.setScalar(0.05);
+                    clone.scale.setScalar(0.03);
 
                     // GROUPING LOGIC: Assign color based on segments of columns
                     // This creates "bands" of grouped colors
@@ -532,6 +536,30 @@ function updatePigLabel(pig) {
             const mouthOffset = new THREE.Vector3(0, 0.4, 0.6); // Front of pig
             mouthOffset.applyQuaternion(pig.quaternion); // Rotate offset to match pig direction
             return pig.position.clone().add(mouthOffset);
+        }
+
+        // Shake animation for blocked pigs
+        function shakePig(pig) {
+            const originalX = pig.position.x;
+            const shakeAmount = 0.1;
+            const shakeDuration = 200;
+            
+            addAnim({
+                elapsed: 0,
+                duration: shakeDuration,
+                update(dt) {
+                    this.elapsed += dt;
+                    const t = this.elapsed / this.duration;
+                    const shakes = 4;
+                    const shakePhase = Math.sin(t * shakes * Math.PI * 2);
+                    pig.position.x = originalX + shakePhase * shakeAmount;
+                    if (t >= 1) {
+                        pig.position.x = originalX;
+                        return true;
+                    }
+                    return false;
+                }
+            });
         }
 
     // 1. Muzzle Flash Effect (At the Pig)
@@ -759,7 +787,7 @@ async function performMillTravel(pig, targetTile) {
     pig.userData.onTile = true;
     pig.userData.moving = false;
 }
-    function onPointerDown(event) {
+   function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -770,8 +798,6 @@ async function performMillTravel(pig, targetTile) {
 
     let obj = intersects[0].object;
     let pig = null;
-
-    // Traverse up to find the root pig
     while (obj) {
         if (obj.userData && obj.userData.parentPig) {
             pig = obj.userData.parentPig;
@@ -780,40 +806,149 @@ async function performMillTravel(pig, targetTile) {
         obj = obj.parent;
     }
 
-    // Safety checks: stop if moving or already sitting
-    if (!pig || pig.userData.moving || pig.userData.onTile) return;
+    // Safety check
+    if (!pig || pig.userData.moving) return;
 
-    // --- FIX 1: CLEAR VARIABLE NAME ---
-    let targetIndex = -1; 
-    
-    // --- FIX 2: CHECK FROM THE LEFT (INDEX 0 TO 4) ---
+    // --- RULE A: If pig is already sitting on a tile ---
+    if (pig.userData.onTile) {
+        if (pig.userData.value > 0) {
+            console.log("Relaunching from tile to smash more cubes!");
+            const myCurrentSlot = pig.userData.currentTileIndex;
+            if (myCurrentSlot !== undefined) {
+                tileOccupancy[myCurrentSlot] = null;
+            }
+            pig.userData.onTile = false; 
+        } else {
+            return; // Out of ammo, can't move
+        }
+    } 
+    // --- RULE B: If pig is in the 3x3 Grid ---
+    else {
+        const row = pig.userData.gridRow;
+        const col = pig.userData.gridCol;
+
+        // --- TRAFFIC CHECK ---
+        let isBlocked = false;
+        for (let r = row - 1; r >= 0; r--) {
+            if (occupancy[r][col] !== null) {
+                isBlocked = true;
+                break;
+            }
+        }
+
+        // --- CRITICAL FIX: If blocked, STOP EVERYTHING ---
+        if (isBlocked) {
+            console.log("Blocked! Cannot shift or spawn.");
+            shakePig(pig);
+            return; // <--- This STOPS the new pig from spawning!
+        }
+
+        // If NOT blocked, start the sequence
+        occupancy[row][col] = null; // 1. Free grid spot
+        shiftColumnForward(row, col); // 2. Trigger shift (Spawn is inside here)
+    }
+
+    // --- GLOBAL STEP: FIND THE FIRST AVAILABLE EMPTY SLOT ---
+    let targetIndex = -1;
     for (let i = 0; i < tileOccupancy.length; i++) {
-        if (tileOccupancy[i] === null) { 
-            targetIndex = i; // Found the first empty white slot!
-            break; 
+        if (tileOccupancy[i] === null) {
+            targetIndex = i;
+            break;
         }
     }
 
-    // --- FIX 3: PREVENT CRASH IF ALL 5 TILES FULL ---
     if (targetIndex === -1) {
-        console.warn("CANNOT MOVE: All 5 process tiles are occupied!");
-        return; 
+        console.error("All tiles occupied! Wait for a pig to finish.");
+        return;
     }
 
-    // SUCCESS - SEND PIG
-    const row = pig.userData.gridRow;
-    const col = pig.userData.gridCol;
-
-    // Update global state immediately
-    occupancy[row][col] = null; // Clear spot in 3x3 grid
-    tileOccupancy[targetIndex] = pig; // Lock the landing tile index
-    pig.userData.currentTileIndex = targetIndex; // SAVE THE INDEX HERE
-
-    console.log("Sending pig to Tile Index:", targetIndex);
-    
-    // Start the movement sequence to that specific tile
+    // Assign to new home and start travel
+    tileOccupancy[targetIndex] = pig;
+    pig.userData.currentTileIndex = targetIndex;
     performMillTravel(pig, tiles[targetIndex]);
 }
+
+function spawnNewPig(row, col) {
+    if (!basePigModel) return;
+
+    // 1. Create Clone from the base scene saved in the loader
+    const newPig = basePigModel.clone(true);
+
+    // 2. Set exactly the SAME scale as the grid pigs
+    newPig.scale.setScalar(globalPigScale);
+
+    // 3. Assign random values/colors
+    const val = Math.random() > 0.5 ? "20" : "40";
+    const color = colors[Math.floor(Math.random() * colors.length)];
+    
+    newPig.userData = {
+        value: parseInt(val),
+        gridRow: row,
+        gridCol: col,
+        moving: false,
+        onTile: false,
+        parentPig: newPig,
+        colorName: color
+    };
+
+    // 4. Attach the label (Ensure scale is same as your code: 4)
+    const label = createPigLabel(newPig);
+    label.position.set(0, 4, 0); 
+    label.renderOrder = 999;
+    newPig.add(label);
+
+    // 5. Apply the colored materials exactly like your loader does
+    newPig.traverse((node) => {
+        if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+            node.material = node.material.clone();
+            if (node.material.color) node.material.color.set(color);
+            node.userData.parentPig = newPig; // For click detection
+        }
+    });
+
+    // 6. Final Position and Rotation (face +X)
+    const x = (col - Math.floor(GRID/2)) * spacingGlobal;
+    const z = (row - Math.floor(GRID/2)) * spacingGlobal + 7;
+    
+    // Spawn 2 units behind the grid, then hop in
+    newPig.position.set(x, 0.5, z + 2); 
+    newPig.rotation.y = Math.PI / 2;
+
+    scene.add(newPig);
+    occupancy[row][col] = newPig;
+
+    // 7. Hopping in Animation
+    const landingPos = new THREE.Vector3(x, 0.5, z);
+    jumpToPoint(newPig, landingPos, 500);
+}
+
+function shiftColumnForward(vacatedRow, col) {
+    // Move existing pigs up
+    for (let r = vacatedRow + 1; r < GRID; r++) {
+        const trailingPig = occupancy[r][col];
+        if (trailingPig) {
+            const targetRow = r - 1;
+            occupancy[targetRow][col] = trailingPig;
+            occupancy[r][col] = null;
+            trailingPig.userData.gridRow = targetRow;
+
+            const targetZ = (targetRow - Math.floor(GRID/2)) * spacingGlobal + 7;
+            const targetX = (col - Math.floor(GRID/2)) * spacingGlobal;
+            jumpToPoint(trailingPig, new THREE.Vector3(targetX, 0.5, targetZ), 400);
+        }
+    }
+
+    // --- NEW LOGIC: FILL THE EMPTY SPACE AT THE BACK ---
+    // If we shifted the whole column, row 2 is now empty.
+    setTimeout(() => {
+        spawnNewPig(2, col); 
+    }, 200); // Small delay for better visual "waiting list" effect
+}
+
+
+
         renderer.domElement.addEventListener('pointerdown', onPointerDown);
 
         function onWindowResize() {
