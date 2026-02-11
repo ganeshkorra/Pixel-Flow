@@ -117,8 +117,57 @@
         scene.add(ground);
 
         const loader = new GLTFLoader();
-        const colors = ['#ffb6c1','#ff4d4d','#4da6ff','#66cc66','#ffd24d','#b266ff'];
-        const colorNames = ['Pink', 'Red', 'Blue', 'Green', 'Yellow', 'Purple'];
+        
+        // Color map for pixel art (moon and star pattern)
+        const levelColors = {
+            0: "#50e3fe", // Cyan Background
+            1: "#ffdf00", // Yellow Moon/Star
+            2: "#000000", // Black Outline
+            3: "#ff7f27", // Orange Cheek
+            4: "#b266ff"  // Purple Frame
+        };
+
+        // Update the main color list so the game knows what color pigs to create
+        const colors = Object.values(levelColors); // Returns ["#50e3fe", "#ffdf00", "#000000", "#ff7f27", "#b266ff"]
+
+        // Simplified Moon and Star Pattern (16 rows x 20 columns)
+        // Use '0' for BG, '1' for Moon/Star, '2' for outline, '3' for cheek, '4' for border
+        const moonPattern = [
+            [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
+            [4,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,4],
+            [0,0,0,0,0,2,2,1,1,1,2,2,0,0,0,0,0,0,0,0],
+            [0,0,0,0,2,1,1,1,1,1,1,1,2,0,0,0,0,0,0,0],
+            [0,0,0,2,1,1,1,1,2,2,1,1,1,2,0,0,0,0,0,0],
+            [0,0,2,1,1,1,1,2,0,0,2,1,1,1,2,0,2,2,0,0],
+            [0,2,1,1,1,1,1,2,0,0,2,1,1,1,1,2,1,1,2,0],
+            [0,2,1,1,3,3,1,1,2,2,1,1,1,1,1,1,2,1,2,0],
+            [0,2,1,1,3,3,1,1,1,1,1,1,2,2,1,1,1,2,0,0],
+            [0,2,1,1,1,1,1,1,1,1,2,2,1,1,2,1,1,2,0,0],
+            [0,0,2,1,1,1,1,1,2,2,1,1,1,2,1,2,2,0,0,0],
+            [0,0,0,2,1,1,1,1,1,1,1,1,2,0,2,0,0,0,0,0],
+            [0,0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,2,2,2,2,0,0,0,2,2,0,0,0,0,0],
+            [4,0,0,0,0,0,0,0,0,0,0,0,2,1,1,2,0,0,0,4],
+            [4,4,4,4,0,0,0,0,0,0,0,0,0,2,2,0,4,4,4,4]
+        ];
+
+        // Calculate color frequencies in moonPattern for weighted spawning
+        const colorFrequency = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+        moonPattern.forEach(row => {
+            row.forEach(code => {
+                colorFrequency[code]++;
+            });
+        });
+        
+        // Create weighted color pool for spawned pigs (matches cube distribution)
+        const weightedColorPool = [];
+        Object.keys(colorFrequency).forEach(code => {
+            const frequency = colorFrequency[code];
+            for (let i = 0; i < frequency; i++) {
+                weightedColorPool.push(colors[parseInt(code)]);
+            }
+        });
+        
         const GRID = 3;
         const pigs = [];
         const occupancy = Array.from({length: GRID}, () => Array(GRID).fill(null));
@@ -254,9 +303,10 @@ function updatePigLabel(pig) {
                     // Ensure clicking the sprite label resolves back to the pig clone
                     label.userData.parentPig = clone;
 
-                    // apply color from list (cycle through colors)
-                    const color = colors[idx % colors.length];
-                    clone.userData.colorName = color; // Save the color hex/name
+                    // apply color from list (cycle through all levelColors)
+                    const gridColorCode = idx % colors.length;
+                    const color = colors[gridColorCode]; // Cycle through Cyan, Yellow, Black, Orange, Purple
+                    clone.userData.colorName = color; // CRITICAL: shooter logic uses this string
                     clone.traverse((node) => {
                         if (node.isMesh && node.material) {
                             if (Array.isArray(node.material)) {
@@ -408,19 +458,19 @@ function updatePigLabel(pig) {
         // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
         cubeLoader.load('Cube_@@.fbx', (cubeModel) => {
-            const cols = 20;
-            const rows = 25;
+            const cols = 20; 
+            const rows = 16; // Based on moonPattern dimensions
             const cubeSpacing = 0.24;
 
             for (let r = 0; r < rows; r++) {
                 for (let c = 0; c < cols; c++) {
                     const clone = cubeModel.clone(true);
                     clone.scale.setScalar(0.03);
-
-                    // GROUPING LOGIC: Assign color based on segments of columns
-                    // This creates "bands" of grouped colors
-                    const colorIndex = Math.floor(c / 3) % colors.length;
-                    const color = colors[colorIndex];
+                    
+                    // --- NEW PIXEL LOGIC ---
+                    // Look up the color code from the pattern matrix
+                    const colorCode = moonPattern[r] && moonPattern[r][c] !== undefined ? moonPattern[r][c] : 0;
+                    const color = levelColors[colorCode]; // Get hex color from the map
                     
                     clone.position.set(
                         (c - cols / 2) * cubeSpacing, 
@@ -428,29 +478,20 @@ function updatePigLabel(pig) {
                         (r - rows / 2) * cubeSpacing - 2.5
                     );
 
-                    // Store position index to calculate "blocked" status
                     clone.userData = {
                         colorName: color,
                         gridX: c,
                         gridZ: r,
-                        blocked: true // Will be calculated below
+                        blocked: true
                     };
 
                     clone.traverse(n => {
                         if (n.isMesh) {
                             n.castShadow = true;
                             n.receiveShadow = true;
-                            if (Array.isArray(n.material)) {
-                                n.material = n.material.map(m => m.clone());
-                                n.material.forEach(m => {
-                                    if (m.color) m.color.set(color);
-                                    m.needsUpdate = true;
-                                });
-                            } else if (n.material) {
-                                n.material = n.material.clone();
-                                if (n.material.color) n.material.color.set(color);
-                                n.material.needsUpdate = true;
-                            }
+                            n.material = n.material.clone();
+                            n.material.color.set(color);
+                            n.material.needsUpdate = true;
                         }
                     });
 
@@ -458,7 +499,7 @@ function updatePigLabel(pig) {
                     cubesToSmash.push(clone);
                 }
             }
-            updateObstacleStatus(); // Determine who is on the outside
+            updateObstacleStatus();
         }, undefined, function(err) {
             console.error('Error loading Cube_@@.fbx', err);
         });
@@ -809,6 +850,22 @@ async function performMillTravel(pig, targetTile) {
     // Safety check
     if (!pig || pig.userData.moving) return;
 
+    // --- PRIORITY STEP: CHECK IF TILES ARE AVAILABLE FIRST ---
+    let targetIndex = -1;
+    for (let i = 0; i < tileOccupancy.length; i++) {
+        if (tileOccupancy[i] === null) {
+            targetIndex = i;
+            break;
+        }
+    }
+
+    // If no tiles available, give feedback and stop
+    if (targetIndex === -1) {
+        console.log("All tiles occupied! Cannot move.");
+        shakePig(pig);
+        return;
+    }
+
     // --- RULE A: If pig is already sitting on a tile ---
     if (pig.userData.onTile) {
         if (pig.userData.value > 0) {
@@ -848,20 +905,6 @@ async function performMillTravel(pig, targetTile) {
         shiftColumnForward(row, col); // 2. Trigger shift (Spawn is inside here)
     }
 
-    // --- GLOBAL STEP: FIND THE FIRST AVAILABLE EMPTY SLOT ---
-    let targetIndex = -1;
-    for (let i = 0; i < tileOccupancy.length; i++) {
-        if (tileOccupancy[i] === null) {
-            targetIndex = i;
-            break;
-        }
-    }
-
-    if (targetIndex === -1) {
-        console.error("All tiles occupied! Wait for a pig to finish.");
-        return;
-    }
-
     // Assign to new home and start travel
     tileOccupancy[targetIndex] = pig;
     pig.userData.currentTileIndex = targetIndex;
@@ -878,8 +921,9 @@ function spawnNewPig(row, col) {
     newPig.scale.setScalar(globalPigScale);
 
     // 3. Assign random values/colors
-    const val = Math.random() > 0.5 ? "20" : "40";
-    const color = colors[Math.floor(Math.random() * colors.length)];
+    const val = Math.random() > 0.5 ? 20 : 40;
+    // PICK FROM THE WEIGHTED COLOR POOL (matches cube distribution)
+    const color = weightedColorPool[Math.floor(Math.random() * weightedColorPool.length)];
     
     newPig.userData = {
         value: parseInt(val),
