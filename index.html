@@ -52,7 +52,7 @@
 </head>
 <body>
     <div id="canvas-container">
-        <div id="hint">Click a pig to move</div>
+        <!-- <div id="hint">Click a pig to move</div> -->
     </div>
 
     <script type="module">
@@ -61,9 +61,85 @@
         import { FBXLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/FBXLoader.js';
         import { OrbitControls } from 'https://unpkg.com/three@0.153.0/examples/jsm/controls/OrbitControls.js';
 
+
+
+
+
+        /* =========================================================
+   GLOBAL CONFIGURATION (The Source of Truth)
+   ========================================================= */
+window.game_object = {
+    GameElements: {
+        PigModel: { name: "Pig Character", data: "pig.glb" },
+        MachineModel: { name: "The Mill", data: "Thread mill.fbx" },
+        ObstacleModel: { name: "Cube Unit", data: "Cube_@@.fbx" },
+        // Matrix for the Moon/Fish Pixel Art
+        FishPattern: [
+            [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
+            [4,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,4],
+            [0,0,0,0,0,2,2,1,1,1,2,2,0,0,0,0,0,0,0,0],
+            [0,0,0,0,2,1,1,1,1,1,1,1,2,0,0,0,0,0,0,0],
+            [0,0,0,2,1,1,1,1,2,2,1,1,1,2,0,0,0,0,0,0],
+            [0,0,2,1,1,1,1,2,0,0,2,1,1,1,2,0,2,2,0,0],
+            [0,2,1,1,1,1,1,2,0,0,2,1,1,1,1,2,1,1,2,0],
+            [0,2,1,1,3,3,1,1,2,2,1,1,1,1,1,1,2,1,2,0],
+            [0,2,1,1,3,3,1,1,1,1,1,1,2,2,1,1,1,2,0,0],
+            [0,2,1,1,1,1,1,1,1,1,2,2,1,1,2,1,1,2,0,0],
+            [0,0,2,1,1,1,1,1,2,2,1,1,1,2,1,2,2,0,0,0],
+            [0,0,0,2,1,1,1,1,1,1,1,1,2,0,2,0,0,0,0,0],
+            [0,0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0,0,0,0],
+            [0,0,0,0,0,0,2,2,2,2,0,0,0,2,2,0,0,0,0,0],
+            [4,0,0,0,0,0,0,0,0,0,0,0,2,1,1,2,0,0,0,4],
+            [4,4,4,4,0,0,0,0,0,0,0,0,0,2,2,0,4,4,4,4]
+        ]
+    },
+
+    GameProperties: { 
+        GridSize: { count: 3 }, 
+        ShootInterval: { amount: 180 }, 
+        AmmoLevels: { low: 20, high: 40 },
+        SpawnHeight: 0.85
+    },
+
+    GameThemes: {
+        PigColors: { 
+            name: "Pig Character Colors",
+            data: {
+                0: { name: "Sky Cyan", code: "#50e3fe" },
+                1: { name: "Moon Yellow", code: "#ffdf00" }, 
+                2: { name: "Outline Black", code: "#000000" }, 
+                3: { name: "Cheek Orange", code: "#ff7f27" },  
+                4: { name: "Border Purple", code: "#b266ff" }   
+            }
+        },
+        CubeColors: { 
+            name: "Level Obstacle Colors",
+            data: {
+                0: { name: "Sky Cyan", code: "#50e3fe" }, 
+                1: { name: "Moon Yellow", code: "#ffdf00" }, 
+                2: { name: "Outline Black", code: "#000000" }, 
+                3: { name: "Cheek Orange", code: "#ff7f27" },  
+                4: { name: "Border Purple", code: "#b266ff" }   
+            }
+        },  
+        Background: { 
+            name: "Scenario Background",
+            data: "#FFF9F1"
+        }
+    },
+
+    Cta: {
+        playStoreLink: "https://play.google.com/store/apps/details?id=com.loomgames.pixelflow&hl=en_IN",
+        appleStoreLink: "https://apps.apple.com/us/app/pixel-flow/id6751056652"
+    }
+};
+
+
+
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
-        scene.background = new THREE.Color(0xf0f0f0);
+        // Accessing Background
+        scene.background = new THREE.Color(window.game_object.GameThemes.Background.data);
 
         // Suppress FBXLoader warnings
         const originalWarn = console.warn;
@@ -118,38 +194,16 @@
 
         const loader = new GLTFLoader();
         
-        // Color map for pixel art (moon and star pattern)
-        const levelColors = {
-            0: "#50e3fe", // Cyan Background
-            1: "#ffdf00", // Yellow Moon/Star
-            2: "#000000", // Black Outline
-            3: "#ff7f27", // Orange Cheek
-            4: "#b266ff"  // Purple Frame
-        };
-
-        // Update the main color list so the game knows what color pigs to create
-        const colors = Object.values(levelColors); // Returns ["#50e3fe", "#ffdf00", "#000000", "#ff7f27", "#b266ff"]
+        // PigColors and CubeColors color mapping
+        const pigColorsData = window.game_object.GameThemes.PigColors.data;
+        const cubeColorsData = window.game_object.GameThemes.CubeColors.data;
+        
+        // Create color array for pig spawning (indices 0-4)
+        const colors = Object.keys(pigColorsData).map(k => pigColorsData[k].code);
 
         // Simplified Moon and Star Pattern (16 rows x 20 columns)
         // Use '0' for BG, '1' for Moon/Star, '2' for outline, '3' for cheek, '4' for border
-        const moonPattern = [
-            [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
-            [4,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,4],
-            [0,0,0,0,0,2,2,1,1,1,2,2,0,0,0,0,0,0,0,0],
-            [0,0,0,0,2,1,1,1,1,1,1,1,2,0,0,0,0,0,0,0],
-            [0,0,0,2,1,1,1,1,2,2,1,1,1,2,0,0,0,0,0,0],
-            [0,0,2,1,1,1,1,2,0,0,2,1,1,1,2,0,2,2,0,0],
-            [0,2,1,1,1,1,1,2,0,0,2,1,1,1,1,2,1,1,2,0],
-            [0,2,1,1,3,3,1,1,2,2,1,1,1,1,1,1,2,1,2,0],
-            [0,2,1,1,3,3,1,1,1,1,1,1,2,2,1,1,1,2,0,0],
-            [0,2,1,1,1,1,1,1,1,1,2,2,1,1,2,1,1,2,0,0],
-            [0,0,2,1,1,1,1,1,2,2,1,1,1,2,1,2,2,0,0,0],
-            [0,0,0,2,1,1,1,1,1,1,1,1,2,0,2,0,0,0,0,0],
-            [0,0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0,0,0,0],
-            [0,0,0,0,0,0,2,2,2,2,0,0,0,2,2,0,0,0,0,0],
-            [4,0,0,0,0,0,0,0,0,0,0,0,2,1,1,2,0,0,0,4],
-            [4,4,4,4,0,0,0,0,0,0,0,0,0,2,2,0,4,4,4,4]
-        ];
+        const moonPattern = window.game_object.GameElements.FishPattern;
 
         // Calculate color frequencies in moonPattern for weighted spawning
         const colorFrequency = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
@@ -167,8 +221,57 @@
                 weightedColorPool.push(colors[parseInt(code)]);
             }
         });
+
+        // ========================================================
+        // AUTO-ARRANGE FUNCTION: Image to Level Parser
+        // ========================================================
+        async function parseImageToLevel(imgUrl, width, height) {
+            return new Promise((resolve) => {
+                const img = new Image();
+                img.crossOrigin = "Anonymous";
+                img.src = imgUrl;
+                img.onload = () => {
+                    const canvas = document.createElement('canvas');
+                    const ctx = canvas.getContext('2d');
+                    canvas.width = width;
+                    canvas.height = height;
+                    
+                    // Draw image scaled down to the machine size
+                    ctx.drawImage(img, 0, 0, width, height);
+                    const data = ctx.getImageData(0, 0, width, height).data;
+                    const newPattern = [];
+
+                    const palette = window.game_object.GameThemes.CubeColors.data;
+
+                    for (let y = 0; y < height; y++) {
+                        const row = [];
+                        for (let x = 0; x < width; x++) {
+                            const i = (y * width + x) * 4;
+                            const r = data[i], g = data[i+1], b = data[i+2];
+                            
+                            // Logic: Find which of our 5 colors is closest to this pixel
+                            let closestID = 0;
+                            let minDist = Infinity;
+                            
+                            Object.keys(palette).forEach(id => {
+                                const col = new THREE.Color(palette[id].code);
+                                const dr = r - col.r * 255;
+                                const dg = g - col.g * 255;
+                                const db = b - col.b * 255;
+                                const dist = dr*dr + dg*dg + db*db; // Math: distance check
+                                if(dist < minDist) { minDist = dist; closestID = parseInt(id); }
+                            });
+                            row.push(closestID);
+                        }
+                        newPattern.push(row);
+                    }
+                    resolve(newPattern);
+                };
+            });
+        }
         
-        const GRID = 3;
+        // Replace your old GRID variable
+        const GRID = window.game_object.GameProperties.GridSize.count;
         const pigs = [];
         const occupancy = Array.from({length: GRID}, () => Array(GRID).fill(null));
         let tiles = [];
@@ -232,7 +335,8 @@ function updatePigLabel(pig) {
     }
 }
 
-        loader.load('pig.glb', function(gltf) {
+        // Pig Loader
+        loader.load(window.game_object.GameElements.PigModel.data, function(gltf) {
             basePigModel = gltf.scene; // Save reference for cloning new pigs later
             const base = gltf.scene;
 
@@ -290,8 +394,9 @@ function updatePigLabel(pig) {
                     // rotate to 90° (face +X direction)
                     clone.rotation.y = Math.PI / 2;
 
-                    // Assign values like the image (alternating 20 and 40)
-                    const pigValue = (idx % 2 === 0) ? "20" : "40";
+                    // Assign values like the image (alternating low and high ammo)
+                    const ammoVals = window.game_object.GameProperties.AmmoLevels;
+                    const pigValue = (idx % 2 === 0) ? ammoVals.low.toString() : ammoVals.high.toString();
                     clone.userData.value = parseInt(pigValue);
                     const label = createPigLabel(clone);
 
@@ -303,16 +408,16 @@ function updatePigLabel(pig) {
                     // Ensure clicking the sprite label resolves back to the pig clone
                     label.userData.parentPig = clone;
 
-                    // apply color from list (cycle through all levelColors)
-                    const gridColorCode = idx % colors.length;
-                    const color = colors[gridColorCode]; // Cycle through Cyan, Yellow, Black, Orange, Purple
-                    clone.userData.colorName = color; // CRITICAL: shooter logic uses this string
+                    // Finding the Pig Ammo color during spawning
+                    const gridColorCode = idx % 5;
+                    const colorHex = window.game_object.GameThemes.PigColors.data[gridColorCode].code;
+                    clone.userData.colorName = colorHex; // CRITICAL: shooter logic uses this string
                     clone.traverse((node) => {
                         if (node.isMesh && node.material) {
                             if (Array.isArray(node.material)) {
-                                node.material.forEach(m => { if (m.color) m.color.set(color); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true; });
+                                node.material.forEach(m => { if (m.color) m.color.set(colorHex); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true; });
                             } else {
-                                const m = node.material; if (m.color) m.color.set(color); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true;
+                                const m = node.material; if (m.color) m.color.set(colorHex); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true;
                             }
                         }
                     });
@@ -413,7 +518,8 @@ function updatePigLabel(pig) {
         // Load Thread mill FBX at the top/front of the layout
         const fbxLoader = new FBXLoader();
         let threadMillModel = null; // Declare this globally with other variables at top
-        fbxLoader.load('Thread mill.fbx', function(object) {
+        // Machine Loader
+        fbxLoader.load(window.game_object.GameElements.MachineModel.data, function(object) {
              threadMillModel = object; // Save reference
             object.scale.set(.3, .3, 0.3); // Adjust scale as needed
             object.position.z = -3; // Position at front (top of mobile view)
@@ -457,51 +563,40 @@ function updatePigLabel(pig) {
 
         // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
-        cubeLoader.load('Cube_@@.fbx', (cubeModel) => {
-            const cols = 20; 
-            const rows = 16; // Based on moonPattern dimensions
-            const cubeSpacing = 0.24;
+        
+        // NEW AUTOMATIC LOADER
+        const imgLevelUrl = "Screenshot 2026-02-12 163339.png"; // UPLOAD YOUR IMAGE HERE
 
-            for (let r = 0; r < rows; r++) {
-                for (let c = 0; c < cols; c++) {
-                    const clone = cubeModel.clone(true);
-                    clone.scale.setScalar(0.03);
-                    
-                    // --- NEW PIXEL LOGIC ---
-                    // Look up the color code from the pattern matrix
-                    const colorCode = moonPattern[r] && moonPattern[r][c] !== undefined ? moonPattern[r][c] : 0;
-                    const color = levelColors[colorCode]; // Get hex color from the map
-                    
-                    clone.position.set(
-                        (c - cols / 2) * cubeSpacing, 
-                        0.5, 
-                        (r - rows / 2) * cubeSpacing - 2.5
-                    );
+        parseImageToLevel(imgLevelUrl, 25, 25).then(autoPattern => {
+            cubeLoader.load(window.game_object.GameElements.ObstacleModel.data, (cubeModel) => {
+                const rows = autoPattern.length;
+                const cols = autoPattern[0].length;
+                const cubeSpacing = 0.24;
 
-                    clone.userData = {
-                        colorName: color,
-                        gridX: c,
-                        gridZ: r,
-                        blocked: true
-                    };
-
-                    clone.traverse(n => {
-                        if (n.isMesh) {
-                            n.castShadow = true;
-                            n.receiveShadow = true;
-                            n.material = n.material.clone();
-                            n.material.color.set(color);
-                            n.material.needsUpdate = true;
-                        }
-                    });
-
-                    scene.add(clone);
-                    cubesToSmash.push(clone);
+                for (let r = 0; r < rows; r++) {
+                    for (let c = 0; c < cols; c++) {
+                        const colorCode = autoPattern[r][c];
+                        const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
+                        
+                        const clone = cubeModel.clone();
+                        clone.scale.setScalar(0.03);
+                        clone.position.set((c - cols/2) * cubeSpacing, 0.5, (r - rows/2) * cubeSpacing - 2.5);
+                        
+                        clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
+                        
+                        // Color the cube automatically based on image pixel
+                        clone.traverse(n => {
+                            if (n.isMesh) {
+                                n.material = n.material.clone();
+                                n.material.color.set(colorHex);
+                            }
+                        });
+                        scene.add(clone);
+                        cubesToSmash.push(clone);
+                    }
                 }
-            }
-            updateObstacleStatus();
-        }, undefined, function(err) {
-            console.error('Error loading Cube_@@.fbx', err);
+                updateObstacleStatus();
+            });
         });
 
         // Animation helper: add an animation object with update(dt)
@@ -726,7 +821,8 @@ async function shootAtCubes(pig) {
                 return;
             }
         }
-        await new Promise(r => setTimeout(r, 180)); 
+        // Inside shootAtCubes()
+        await new Promise(r => setTimeout(r, window.game_object.GameProperties.ShootInterval.amount)); 
     }
 }
 
@@ -776,8 +872,8 @@ async function performMillTravel(pig, targetTile) {
     // --- Start shooting thread immediately in parallel ---
     shootAtCubes(pig);
 
-    // KEEPING YOUR VALUES EXACTLY AS IS
-    const h = 0.85; 
+    // The Path Heights
+    const h = window.game_object.GameProperties.SpawnHeight; 
     const mX = threadMillModel.position.x;
     const mZ = threadMillModel.position.z; 
 
