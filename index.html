@@ -65,14 +65,14 @@
 
 
 
+        let activeLevelColors = []; // Will store only colors used in the current image
         /* =========================================================
    GLOBAL CONFIGURATION (The Source of Truth)
    ========================================================= */
 window.game_object = {
     GameElements: {
-        CharModel: { name: "Character Model", data: "pig.glb" },
-        MachineModel: { name: "The Mill", data: "Thread mill.fbx" },
-        ObstacleModel: { name: "Cube Unit", data: "Cube_@@.fbx" },
+    CharModel: { name: "Character Model", data: "pig.glb" },
+    ObstacleModel: { name: "Cube Unit", data: "Cube_@@.fbx" },
         // Matrix for the Moon/Character Pixel Art
         CharacterPattern: [
             [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
@@ -98,7 +98,9 @@ window.game_object = {
         GridSize: { count: 3 }, 
         ShootInterval: { amount: 1080 }, 
         AmmoLevels: { low: 20, high: 40 },
-        SpawnHeight: 0.85
+        SpawnHeight: 0.85,
+        CubeSize: { size: 0.03 },
+        LevelSize: { rows: 20, cols: 20 }
     },
 
     GameThemes: {
@@ -127,6 +129,7 @@ window.game_object = {
             data: "#FFF9F1"
         }
     },
+        
 
     Cta: {
         playStoreLink: "https://play.google.com/store/apps/details?id=com.loomgames.pixelflow&hl=en_IN",
@@ -285,6 +288,7 @@ window.game_object = {
         const clock = new THREE.Clock();
         let baseCharModel = null;
         let globalCharScale = 1.2; // Default, will be updated by loader
+        let movingBeltTex = null; // For the animated conveyor belt
 
 function createCharLabelTexture(text) {
     const canvas = document.createElement('canvas');
@@ -350,89 +354,7 @@ function updateCharLabel(Char) {
             const grid = GRID;
             const spacing = Math.max(maxDim * scale * 1.6, 1.2);
             spacingGlobal = spacing;
-            let idx = 0;
-
-            for (let row = 0; row < grid; row++) {
-                for (let col = 0; col < grid; col++) {
-                    // Clone the model and ensure materials are unique per mesh
-                    const clone = base.clone(true);
-
-                    clone.traverse((node) => {
-                        if (node.isMesh) {
-                            node.castShadow = true;
-                            node.receiveShadow = true;
-                            if (Array.isArray(node.material)) {
-                                node.material = node.material.map(m => m.clone());
-                            } else if (node.material) {
-                                node.material = node.material.clone();
-                            }
-                            // make meshes pickable and reference their parent clone
-                            pickable.push(node);
-                            node.userData.parentChar = clone;
-                        }
-                    });
-
-                    clone.scale.setScalar(scale);
-
-                    // compute bounding box for clone to place on ground
-                    const box = new THREE.Box3().setFromObject(clone);
-                    const center = box.getCenter(new THREE.Vector3());
-                    // Move clone so it's centered around origin horizontally
-                    clone.position.x += -center.x;
-
-                    // position in grid (centered) - moved lower in Z for mobile layout
-                    const x = (col - Math.floor(grid/2)) * spacing;
-                    const z = (row - Math.floor(grid/2)) * spacing + 7; // Push Chars down
-                    clone.position.x += x;
-                    clone.position.z = z;
-
-                    // adjust Y so feet touch ground
-                    box.setFromObject(clone);
-                    const yOffset = -box.min.y;
-                    clone.position.y += yOffset + 0.01;
-
-                    // rotate to 90° (face +X direction)
-                    clone.rotation.y = Math.PI / 2;
-
-                    // Assign values like the image (alternating low and high ammo)
-                    const ammoVals = window.game_object.GameProperties.AmmoLevels;
-                    const CharValue = (idx % 2 === 0) ? ammoVals.low.toString() : ammoVals.high.toString();
-                    clone.userData.value = parseInt(CharValue);
-                    const label = createCharLabel(clone);
-
-                    // Position label on the Char's back
-                    // Since we are using a Sprite, it will always face the camera
-                    label.position.set(0, 4, 0);
-                    label.renderOrder = 999;
-                    clone.add(label);
-                    // Ensure clicking the sprite label resolves back to the Char clone
-                    label.userData.parentChar = clone;
-
-                    // Finding the Char Ammo color during spawning
-                    const gridColorCode = idx % 5;
-                    const colorHex = window.game_object.GameThemes.CharColors.data[gridColorCode].code;
-                    clone.userData.colorName = colorHex; // CRITICAL: shooter logic uses this string
-                    clone.traverse((node) => {
-                        if (node.isMesh && node.material) {
-                            if (Array.isArray(node.material)) {
-                                node.material.forEach(m => { if (m.color) m.color.set(colorHex); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true; });
-                            } else {
-                                const m = node.material; if (m.color) m.color.set(colorHex); if (m.emissive) m.emissive.set(0x000000); m.needsUpdate = true;
-                            }
-                        }
-                    });
-
-                    // tag grid coords and register
-                    clone.userData.gridRow = row;
-                    clone.userData.gridCol = col;
-                    clone.userData.moving = false;
-                    Chars.push(clone);
-                    occupancy[row][col] = clone;
-
-                    scene.add(clone);
-                    idx++;
-                }
-            }
+            // Initial grid characters will be spawned after level analysis
 
             // Create 5 tiles below thread mill, above Char grid (centered horizontally)
             tiles = [];
@@ -459,102 +381,110 @@ function updateCharLabel(Char) {
             console.error('Error loading Char.glb', err);
         });
 
-        // Create quilted/padded texture for thread mill
-        function createQuiltedTexture() {
-            const canvas = document.createElement('canvas');
-            canvas.width = 512;
-            canvas.height = 512;
-            const ctx = canvas.getContext('2d');
-            
-            // Base color (light gray-blue like in the image)
-            ctx.fillStyle = '#a8a9b5';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw quilted diamond pattern
-            const gridSize = 32;
-            const lineWidth = 2;
-            
-            ctx.strokeStyle = 'rgba(0, 0, 0, 0.3)';
-            ctx.lineWidth = lineWidth;
-            
-            for (let y = 0; y < canvas.height; y += gridSize) {
-                for (let x = 0; x < canvas.width; x += gridSize) {
-                    // Draw diamond pattern
-                    ctx.beginPath();
-                    ctx.moveTo(x + gridSize / 2, y);
-                    ctx.lineTo(x + gridSize, y + gridSize / 2);
-                    ctx.lineTo(x + gridSize / 2, y + gridSize);
-                    ctx.lineTo(x, y + gridSize / 2);
-                    ctx.closePath();
-                    ctx.stroke();
-                    
-                    // Add shading for 3D effect
-                    ctx.fillStyle = 'rgba(255, 255, 255, 0.15)';
-                    ctx.beginPath();
-                    ctx.moveTo(x + gridSize / 2, y);
-                    ctx.lineTo(x + gridSize / 2 + 5, y + 5);
-                    ctx.lineTo(x + gridSize / 2, y + gridSize / 2);
-                    ctx.lineTo(x + gridSize / 2 - 5, y + 5);
-                    ctx.closePath();
-                    ctx.fill();
-                    
-                    ctx.fillStyle = 'rgba(0, 0, 0, 0.1)';
-                    ctx.beginPath();
-                    ctx.moveTo(x + gridSize / 2, y + gridSize);
-                    ctx.lineTo(x + gridSize / 2 + 5, y + gridSize - 5);
-                    ctx.lineTo(x + gridSize / 2, y + gridSize / 2);
-                    ctx.lineTo(x + gridSize / 2 - 5, y + gridSize - 5);
-                    ctx.closePath();
-                    ctx.fill();
-                }
-            }
-            
-            const texture = new THREE.CanvasTexture(canvas);
-            texture.magFilter = THREE.LinearFilter;
-            texture.minFilter = THREE.LinearMipmapLinearFilter;
-            return texture;
+        // Create conveyor belt texture with arrow pattern
+function createConveyorBeltTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 128;
+    const ctx = canvas.getContext('2d');
+
+    // Belt base color
+    ctx.fillStyle = '#3d4000373';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    // Chevron '<' arrows using the arrow color
+    ctx.strokeStyle = '#4a5080';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const stepX = 32;
+    const stepY = 32;
+    const chevronW = 7;
+    const chevronH = 10;
+
+    for (let row = 0; row < canvas.height / stepY + 1; row++) {
+        for (let col = 0; col < canvas.width / stepX + 1; col++) {
+            const cx = col * stepX + stepX / 2;
+            const cy = row * stepY + stepY / 2;
+
+            ctx.beginPath();
+            ctx.moveTo(cx + chevronW, cy - chevronH);
+            ctx.lineTo(cx - chevronW, cy);
+            ctx.lineTo(cx + chevronW, cy + chevronH);
+            ctx.stroke();
         }
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.wrapS = THREE.RepeatWrapping;
+    texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(4, 4);
+    return texture;
+}
 
         // Load Thread mill FBX at the top/front of the layout
         const fbxLoader = new FBXLoader();
+        const MACHINE_MODEL_PATH = "Tread mill.fbx";
+        const TRAY_MODEL_PATH = "Tray_@(1).fbx";
         let threadMillModel = null; // Declare this globally with other variables at top
         // Machine Loader
-        fbxLoader.load(window.game_object.GameElements.MachineModel.data, function(object) {
-             threadMillModel = object; // Save reference
-            object.scale.set(.3, .3, 0.3); // Adjust scale as needed
-            object.position.z = -3; // Position at front (top of mobile view)
-            object.position.y = 0;
-            object.rotation.y = -Math.PI / 2; // Rotate -45 degrees
+        fbxLoader.load(MACHINE_MODEL_PATH, function(object) {
+            threadMillModel = object;
+            object.scale.set(.32, .32, 0.32);
+            object.position.set(0, 0, -3);
+            object.rotation.y = -Math.PI / 2;
             
-            const quiltedTexture = createQuiltedTexture();
+            // Create our new texture
+            movingBeltTex = createConveyorBeltTexture();
             
-            object.traverse((node) => {
-                if (node.isMesh) {
-                    node.castShadow = true;
-                    node.receiveShadow = true;
-                    
-                    // Apply quilted texture to all meshes
-                    if (Array.isArray(node.material)) {
-                        node.material = node.material.map(m => 
-                            new THREE.MeshStandardMaterial({ 
-                                map: quiltedTexture,
-                                color: 0xa8a9b5,
-                                metalness: 0.1,
-                                roughness: 0.7
-                            })
-                        );
-                    } else if (node.material) {
-                        node.material = new THREE.MeshStandardMaterial({
-                            map: quiltedTexture,
-                            color: 0xa8a9b5,
-                            metalness: 0.1,
-                            roughness: 0.7
-                        });
-                    }
-                }
+       object.traverse((node) => {
+    if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+
+        const name = node.name.toLowerCase();
+
+        // Belt surface mesh → scrolling chevron texture
+        if (name.includes('belt') || name.includes('conveyor')) {
+            node.material = new THREE.MeshStandardMaterial({
+                map: movingBeltTex,
+                metalness: 0.1,
+                roughness: 0.85
             });
+
+        // Side/frame/body meshes → flat #b8cbe4 steel-blue
+        } else {
+            node.material = new THREE.MeshStandardMaterial({
+                color: 0x93a7d5,
+                metalness: 0.3,
+                roughness: 0.6
+            });
+        }
+    }
+});
             
             scene.add(object);
+
+            // Load a small tray into the treadmill gap (reference placement)
+            fbxLoader.load(TRAY_MODEL_PATH, function(tray) {
+                // Scale and place relative to the machine bounding box centre
+                tray.scale.set(0.32, 0.32, 0.32);
+                const machineBox = new THREE.Box3().setFromObject(object);
+                const mCenter = machineBox.getCenter(new THREE.Vector3());
+                // Position the tray slightly above the machine center and towards the front gap
+                tray.position.set(mCenter.x + 0.21, mCenter.y + 0.2, mCenter.z + 0.2);
+                tray.rotation.y = object.rotation.y;
+                tray.traverse(node => {
+                    if (node.isMesh) {
+                        node.castShadow = true;
+                        node.receiveShadow = true;
+                        // Give a simple material so it reads well in the scene
+                        node.material = new THREE.MeshStandardMaterial({ color: 0x7e86a6, metalness: 0.15, roughness: 0.55 });
+                    }
+                });
+                scene.add(tray);
+            }, undefined, function(err) { console.error('Error loading Tray_@(1).fbx', err); });
         }, undefined, function(err) {
             console.error('Error loading Thread mill.fbx', err);
         });
@@ -565,9 +495,20 @@ function updateCharLabel(Char) {
         const cubeLoader = new FBXLoader();
         
         // NEW AUTOMATIC LOADER
-        const imgLevelUrl = "Screenshot 2026-02-18 132325.png"; // UPLOAD YOUR IMAGE HERE
+        const imgLevelUrl = "Screenshot 2026-02-11 195322.png"; // UPLOAD YOUR IMAGE HERE
 
-        parseImageToLevel(imgLevelUrl, 25, 25).then(autoPattern => {
+        const LEVEL_ROWS = window.game_object.GameProperties.LevelSize.rows;
+        const LEVEL_COLS = window.game_object.GameProperties.LevelSize.cols;
+
+        parseImageToLevel(imgLevelUrl, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
+            // 1. EXTRACT USEFUL COLORS (Pattern wise) from the pattern (ignore background)
+            let usedCodes = [...new Set(autoPattern.flat())].filter(c => c !== 0);
+            if (usedCodes.length === 0) {
+                console.warn('No mission colors detected from pattern; using all non-background cube colors as a fallback');
+                usedCodes = Object.keys(cubeColorsData).map(Number).filter(k => k !== 0);
+            }
+
+            // 2. Load Cubes (existing logic) and derive active colors from actually placed cubes
             cubeLoader.load(window.game_object.GameElements.ObstacleModel.data, (cubeModel) => {
                 const rows = autoPattern.length;
                 const cols = autoPattern[0].length;
@@ -577,13 +518,13 @@ function updateCharLabel(Char) {
                     for (let c = 0; c < cols; c++) {
                         const colorCode = autoPattern[r][c];
                         const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
-                        
+
                         const clone = cubeModel.clone();
-                        clone.scale.setScalar(0.03);
+                        clone.scale.setScalar(window.game_object.GameProperties.CubeSize.size);
                         clone.position.set((c - cols/2) * cubeSpacing, 0.5, (r - rows/2) * cubeSpacing - 2.5);
-                        
+
                         clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
-                        
+
                         // Color the cube automatically based on image pixel
                         clone.traverse(n => {
                             if (n.isMesh) {
@@ -596,6 +537,74 @@ function updateCharLabel(Char) {
                     }
                 }
                 updateObstacleStatus();
+
+                // Derive mission colors from the placed cubes (robust against mapping/sampling differences)
+                const colorCounts = {};
+                cubesToSmash.forEach(c => {
+                    const col = c.userData.colorName;
+                    colorCounts[col] = (colorCounts[col] || 0) + 1;
+                });
+
+                // Exclude black/background and sort by frequency
+                const sortedColors = Object.keys(colorCounts)
+                    .filter(k => k && k !== '#000000')
+                    .sort((a,b) => colorCounts[b] - colorCounts[a]);
+
+                // Use up to top 3 colors for this mission
+                const topCount = Math.min(3, sortedColors.length);
+                activeLevelColors = sortedColors.slice(0, topCount);
+                console.log('Active Mission Colors (from placed cubes):', activeLevelColors, 'counts:', colorCounts);
+
+                // Build spawn color distribution for the initial GRID x GRID chars
+                function buildSpawnDistribution(totalSlots) {
+                    const totalCubes = Object.values(colorCounts).reduce((s,v) => s+v, 0) || 1;
+                    const slots = [];
+                    activeLevelColors.forEach(col => {
+                        const proportion = (colorCounts[col] || 0) / totalCubes;
+                        const want = Math.round(proportion * totalSlots);
+                        for (let i=0;i<want;i++) slots.push(col);
+                    });
+                    // Fill or trim to match totalSlots
+                    while (slots.length < totalSlots) slots.push(activeLevelColors[0]);
+                    while (slots.length > totalSlots) slots.pop();
+                    // shuffle
+                    for (let i = slots.length - 1; i > 0; i--) {
+                        const j = Math.floor(Math.random() * (i + 1));
+                        [slots[i], slots[j]] = [slots[j], slots[i]];
+                    }
+                    return slots;
+                }
+
+                const totalGrid = GRID * GRID;
+                const spawnColors = buildSpawnDistribution(totalGrid);
+
+                // Count how many initial chars per color we will spawn
+                const spawnCounts = {};
+                spawnColors.forEach(c => spawnCounts[c] = (spawnCounts[c] || 0) + 1);
+
+                // 3. GENERATE INITIAL PIGS AFTER CUBES ARE PLACED
+                function spawnInitialGrid() {
+                    if (!baseCharModel) {
+                        // Try again shortly until model is loaded
+                        setTimeout(spawnInitialGrid, 100);
+                        return;
+                    }
+                    let idx = 0;
+                    for (let row = 0; row < GRID; row++) {
+                        for (let col = 0; col < GRID; col++) {
+                            const myMissionColor = spawnColors[idx++];
+                            // Distribute ammo so total ammo across initial chars approximates cube count
+                            const needed = colorCounts[myMissionColor] || 1;
+                            const perChar = Math.max(1, Math.ceil(needed / (spawnCounts[myMissionColor] || 1)));
+                            console.log(`Spawning initial pig at ${row},${col} with color ${myMissionColor} ammo ${perChar}`);
+                            spawnStartingPig(row, col, myMissionColor);
+                            // set the ammo explicitly on the spawned char (spawnStartingPig sets random ammo currently)
+                            const placed = occupancy[row][col];
+                            if (placed) { placed.userData.value = perChar; updateCharLabel(placed); }
+                        }
+                    }
+                }
+                spawnInitialGrid();
             });
         });
 
@@ -1027,59 +1036,90 @@ async function performMillTravel(Char, targetTile) {
     }
 }
 
-function spawnNewChar(row, col) {
+// Spawn a starting pig that uses a mission color (called during initial grid creation)
+function spawnStartingPig(row, col, missionColor) {
     if (!baseCharModel) return;
-
-    // 1. Create Clone from the base scene saved in the loader
     const newChar = baseCharModel.clone(true);
-
-    // 2. Set exactly the SAME scale as the grid Chars
     newChar.scale.setScalar(globalCharScale);
 
-    // 3. Assign random values/colors
     const val = Math.random() > 0.5 ? 20 : 40;
-    // PICK FROM THE WEIGHTED COLOR POOL (matches cube distribution)
-    const color = weightedColorPool[Math.floor(Math.random() * weightedColorPool.length)];
-    
     newChar.userData = {
-        value: parseInt(val),
+        value: val,
         gridRow: row,
         gridCol: col,
         moving: false,
         onTile: false,
         parentChar: newChar,
-        colorName: color
+        colorName: missionColor
     };
 
-    // 4. Attach the label (Ensure scale is same as your code: 4)
     const label = createCharLabel(newChar);
-    label.position.set(0, 4, 0); 
+    label.position.set(0, 4, 0);
     label.renderOrder = 999;
     newChar.add(label);
 
-    // 5. Apply the colored materials exactly like your loader does
     newChar.traverse((node) => {
         if (node.isMesh) {
             node.castShadow = true;
             node.receiveShadow = true;
             node.material = node.material.clone();
-            if (node.material.color) node.material.color.set(color);
-            node.userData.parentChar = newChar; // For click detection
+            if (node.material.color) node.material.color.set(missionColor);
+            node.userData.parentChar = newChar;
         }
     });
 
-    // 6. Final Position and Rotation (face +X)
     const x = (col - Math.floor(GRID/2)) * spacingGlobal;
     const z = (row - Math.floor(GRID/2)) * spacingGlobal + 7;
-    
-    // Spawn 2 units behind the grid, then hop in
-    newChar.position.set(x, 0.5, z + 2); 
+    newChar.position.set(x, 0.5, z);
+    newChar.rotation.y = Math.PI / 2;
+
+    scene.add(newChar);
+    occupancy[row][col] = newChar;
+    Chars.push(newChar);
+}
+
+function spawnNewChar(row, col) {
+    if (!baseCharModel || activeLevelColors.length === 0) return;
+
+    const newChar = baseCharModel.clone(true);
+    newChar.scale.setScalar(globalCharScale);
+
+    // CRITICAL: Pull from MISSION COLORS only
+    const missionColor = activeLevelColors[Math.floor(Math.random() * activeLevelColors.length)];
+    const val = Math.random() > 0.5 ? 20 : 40;
+    newChar.userData = {
+        value: val,
+        gridRow: row,
+        gridCol: col,
+        moving: false,
+        onTile: false,
+        parentChar: newChar,
+        colorName: missionColor
+    };
+
+    const label = createCharLabel(newChar);
+    label.position.set(0, 4, 0);
+    label.renderOrder = 999;
+    newChar.add(label);
+
+    newChar.traverse((node) => {
+        if (node.isMesh) {
+            node.castShadow = true;
+            node.receiveShadow = true;
+            node.material = node.material.clone();
+            if (node.material.color) node.material.color.set(missionColor);
+            node.userData.parentChar = newChar;
+        }
+    });
+
+    const x = (col - Math.floor(GRID/2)) * spacingGlobal;
+    const z = (row - Math.floor(GRID/2)) * spacingGlobal + 7;
+    newChar.position.set(x, 0.5, z + 2);
     newChar.rotation.y = Math.PI / 2;
 
     scene.add(newChar);
     occupancy[row][col] = newChar;
 
-    // 7. Hopping in Animation
     const landingPos = new THREE.Vector3(x, 0.5, z);
     jumpToPoint(newChar, landingPos, 500);
 }
@@ -1123,6 +1163,14 @@ function shiftColumnForward(vacatedRow, col) {
             requestAnimationFrame(animate);
             const dt = Math.min(clock.getDelta() * 1000, 40); // dt in ms, capped
             processAnims(dt);
+
+            // --- CONTINUOUS TREADMILL MOVEMENT ---
+            if (movingBeltTex) {
+                // Shift the arrows horizontally based on frame time
+                // -0.006 creates a smooth forward motion
+                movingBeltTex.offset.x -= 0.005; 
+            }
+
             controls.update();
             renderer.render(scene, camera);
         }
