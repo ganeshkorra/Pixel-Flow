@@ -668,11 +668,12 @@ function updateCharLabel(Char) {
             });
         }
 
-        function getMouthPosition(Char) {
-            const mouthOffset = new THREE.Vector3(0, 0.4, 0.6); // Front of Char
-            mouthOffset.applyQuaternion(Char.quaternion); // Rotate offset to match Char direction
-            return Char.position.clone().add(mouthOffset);
-        }
+// Calculates the snout based on current 3D rotation
+function getMouthPosition(pig) {
+    const mouthOffset = new THREE.Vector3(0, 0.45, 0.7); 
+    mouthOffset.applyQuaternion(pig.quaternion); 
+    return pig.position.clone().add(mouthOffset);
+}
 
         // Shake animation for blocked Chars
         function shakeChar(Char) {
@@ -719,23 +720,19 @@ function updateCharLabel(Char) {
             });
         }
 
-    // 1. Muzzle Flash Effect (At the Char)
+// Visual glowing "Pop" when firing
 function createMuzzleFlash(pos) {
-    const flashGeom = new THREE.SphereGeometry(0.3, 8, 8);
+    const flashGeom = new THREE.SphereGeometry(0.35, 12, 12);
     const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     const flash = new THREE.Mesh(flashGeom, flashMat);
     flash.position.copy(pos);
     scene.add(flash);
-
     addAnim({
-        elapsed: 0, duration: 100,
+        elapsed: 0, duration: 120,
         update(dt) {
-            this.elapsed += dt;
-            const t = this.elapsed / this.duration;
-            flash.scale.setScalar(1 + t * 2);
-            flash.material.opacity = 1 - t;
-            if (t >= 1) { scene.remove(flash); return true; }
-            return false;
+            this.elapsed += dt; const t = this.elapsed / this.duration;
+            flash.scale.setScalar(1 + t * 2); flash.material.opacity = 1 - t;
+            if (t >= 1) { scene.remove(flash); return true; } return false;
         }
     });
 }
@@ -769,38 +766,46 @@ function createImpactEffect(pos, color) {
     }
 }
 
-// 3. Smooth Projectile with Acceleration Easing
-function createBullet(Char, targetPos, color) {
-    const from = getMouthPosition(Char);
-    // Visual improvement: Emissive Glowing sphere
-    const bullet = new THREE.Mesh(
-        new THREE.SphereGeometry(0.14, 16, 16),
-        new THREE.MeshStandardMaterial({ 
-            emissive: color, 
-            emissiveIntensity: 10, // Brighter glow
-            toneMapped: false 
-        })
+// NEW HIGH-QUALITY AMMO: White Glowing Sphere with a long Trail
+function createBullet(pig, to, color) {
+    const from = getMouthPosition(pig);
+    
+    // Core of the bullet (Glowing White Ball)
+    const bulletGroup = new THREE.Group();
+    
+    // 1. The Head
+    const head = new THREE.Mesh(
+        new THREE.SphereGeometry(0.2, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 10, toneMapped: false })
     );
-    bullet.position.copy(from);
-    scene.add(bullet);
+    
+    // 2. The Tail (Stretch line)
+    const tail = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.02, 1.2, 12),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })
+    );
+    tail.rotation.x = Math.PI / 2; // Lie flat
+    tail.position.z = -0.5; // Place behind the head
+    
+    bulletGroup.add(head);
+    bulletGroup.add(tail);
+    bulletGroup.position.copy(from);
+    scene.add(bulletGroup);
 
     addAnim({
-        elapsed: 0, duration: 180,
+        elapsed: 0, duration: 180, // High speed flight
         update(dt) {
             this.elapsed += dt;
-            let t = this.elapsed / this.duration;
+            const t = Math.min(this.elapsed / this.duration, 1);
             
-            // SMOOTHING: Cubic easing out makes it look like it "snaps" to the target
+            // Starts fast, finishes smoothly (Snappy!)
             const easedT = 1 - Math.pow(1 - t, 3);
-            
-            bullet.position.lerpVectors(from, targetPos, easedT);
-            
-            // Add a tiny parabolic arc (up and down) for natural flight
-            bullet.position.y += Math.sin(t * Math.PI) * 0.2;
+            bulletGroup.position.lerpVectors(from, to, easedT);
+            bulletGroup.lookAt(to); // Points the trail exactly behind the head
 
             if (t >= 1) { 
-                createImpactEffect(targetPos, color);
-                scene.remove(bullet); 
+                createImpactEffect(to, color); // The colored explosion at the cube
+                scene.remove(bulletGroup); 
                 return true; 
             }
             return false;
@@ -808,44 +813,43 @@ function createBullet(Char, targetPos, color) {
     });
 }
 
-// 4. Integrated Combat Loop with Recoil & Smooth Projectiles
-async function shootAtCubes(Char) {
-    const myColor = Char.userData.colorName;
+// Integrated Combat Loop with Recoil & Beautiful Projectiles
+async function shootAtCubes(pig) {
+    const myColor = pig.userData.colorName;
 
-    while (Char.userData.moving && Char.userData.value > 0) {
-        let target = null;
-        let minDist = 6;
+    while (pig.userData.moving && pig.userData.value > 0) {
+        let closest = null;
+        let minDist = 7;
 
         cubesToSmash.forEach((cube, index) => {
             if (cube.userData.colorName === myColor && !cube.userData.blocked) {
-                const dist = Char.position.distanceTo(cube.position);
-                if (dist < minDist) { minDist = dist; target = { cube, index }; }
+                const dist = pig.position.distanceTo(cube.position);
+                if (dist < minDist) { minDist = dist; closest = { cube, index }; }
             }
         });
 
-        if (target) {
-            // THE SMOOTH "BANG":
-            applyRecoil(Char); // Physical body reaction
-            createMuzzleFlash(getMouthPosition(Char)); // Snout flash
-            createBullet(Char, target.cube.position.clone(), myColor); // Eased bullet
+        if (closest) {
+            const muzzlePos = getMouthPosition(pig);
             
-            // Destroy target
-            scene.remove(target.cube);
-            cubesToSmash.splice(target.index, 1);
-            updateObstacleStatus(); 
+            // Trigger ALL effects simultaneously
+            applyRecoil(pig);       // 1. Character Kickback
+            createMuzzleFlash(muzzlePos); // 2. Snout light pop
+            createBullet(pig, closest.cube.position.clone(), myColor); // 3. The Glow Bullet
             
-            Char.userData.value--;
-            updateCharLabel(Char);
+            // Process damage
+            scene.remove(closest.cube);
+            cubesToSmash.splice(closest.index, 1);
+            updateObstacleStatus(); // reveals inner cubes
+            
+            pig.userData.value--;
+            updateCharLabel(pig);
 
-            if (Char.userData.value <= 0) {
-                console.log("Ammo empty! Freeing tile index:", Char.userData.currentTileIndex);
-                const indexToFree = Char.userData.currentTileIndex;
-                if (indexToFree !== undefined && tileOccupancy[indexToFree] === Char) {
-                    tileOccupancy[indexToFree] = null;
-                }
-
-                scene.remove(Char);
-                Char.userData.moving = false;
+            // Safety check for empty ammo
+            if (pig.userData.value <= 0) {
+                const idx = pig.userData.currentTileIndex;
+                if (idx !== undefined && tileOccupancy[idx] === pig) tileOccupancy[idx] = null;
+                scene.remove(pig);
+                pig.userData.moving = false;
                 return;
             }
         }
