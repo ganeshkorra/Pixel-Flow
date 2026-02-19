@@ -99,7 +99,7 @@ window.game_object = {
         ShootInterval: { amount: 0 }, 
         AmmoLevels: { low: 0, high: 0 },
         SpawnHeight: 0.85,
-        CubeSize: { size: 0.03 },
+        CubeSize: { width: 0.03, height:  0.07, depth: 0.03 },
         LevelSize: { rows: 20, cols: 20 }
     },
 
@@ -156,10 +156,11 @@ window.game_object = {
             originalWarn.apply(console, args);
         };
 
-        const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
-        // Fixed camera matching reference composition
-        camera.position.set(0, 19, 10);
-        camera.lookAt(0, 0.5, 0);
+    const aspect = container.clientWidth / container.clientHeight;
+const size = 8;
+const camera = new THREE.OrthographicCamera(-size * aspect, size * aspect, size, -size, 0.1, 1000);
+camera.position.set(0, 20, 0);
+camera.lookAt(0, 0, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
@@ -288,7 +289,6 @@ window.game_object = {
         const clock = new THREE.Clock();
         let baseCharModel = null;
         let globalCharScale = 1.2; // Default, will be updated by loader
-        let movingBeltTex = null; // For the animated conveyor belt
         let totalTime = 0; // Game time for idle animations
 
 function createCharLabelTexture(text) {
@@ -382,115 +382,97 @@ function updateCharLabel(Char) {
             console.error('Error loading Char.glb', err);
         });
 
-        // Create conveyor belt texture with arrow pattern
-function createConveyorBeltTexture() {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128;
-    canvas.height = 128;
-    const ctx = canvas.getContext('2d');
-
-    // Belt base color
-    ctx.fillStyle = '#3d4000373';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Chevron '<' arrows using the arrow color
-    ctx.strokeStyle = '#4a5080';
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-
-    const stepX = 32;
-    const stepY = 32;
-    const chevronW = 7;
-    const chevronH = 10;
-
-    for (let row = 0; row < canvas.height / stepY + 1; row++) {
-        for (let col = 0; col < canvas.width / stepX + 1; col++) {
-            const cx = col * stepX + stepX / 2;
-            const cy = row * stepY + stepY / 2;
-
-            ctx.beginPath();
-            ctx.moveTo(cx + chevronW, cy - chevronH);
-            ctx.lineTo(cx - chevronW, cy);
-            ctx.lineTo(cx + chevronW, cy + chevronH);
-            ctx.stroke();
-        }
-    }
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.wrapS = THREE.RepeatWrapping;
-    texture.wrapT = THREE.RepeatWrapping;
-    texture.repeat.set(4, 4);
-    return texture;
-}
-
-        // Load Thread mill FBX at the top/front of the layout
-        const fbxLoader = new FBXLoader();
-        const MACHINE_MODEL_PATH = "Tread mill.fbx";
-        const TRAY_MODEL_PATH = "Tray_@(1).fbx";
-        let threadMillModel = null; // Declare this globally with other variables at top
-        // Machine Loader
-        fbxLoader.load(MACHINE_MODEL_PATH, function(object) {
-            threadMillModel = object;
-            object.scale.set(.32, .32, 0.32);
-            object.position.set(0, 0, -3);
-            object.rotation.y = -Math.PI / 2;
+        // Load Treadbase GLTF Model
+        let threadMillModel = null;
+        loader.load("Treadbase 1.glb", function(gltf) {
+            threadMillModel = gltf.scene;
+            console.log('Treadbase 1.glb loaded:', threadMillModel);
             
-            // Create our new texture
-            movingBeltTex = createConveyorBeltTexture();
+            // Calculate appropriate scale based on model size
+            const threadBox = new THREE.Box3().setFromObject(threadMillModel);
+            const threadSize = threadBox.getSize(new THREE.Vector3());
+            const threadMaxDim = Math.max(threadSize.x, threadSize.y, threadSize.z);
+            const threadScale = 8.0 / threadMaxDim; // Scale to ~4 units width
             
-       object.traverse((node) => {
-    if (node.isMesh) {
-        node.castShadow = true;
-        node.receiveShadow = true;
-
-        const name = node.name.toLowerCase();
-
-        // Belt surface mesh → scrolling chevron texture
-        if (name.includes('belt') || name.includes('conveyor')) {
-            node.material = new THREE.MeshStandardMaterial({
-                map: movingBeltTex,
-                metalness: 0.1,
-                roughness: 0.85
+            threadMillModel.scale.setScalar(threadScale);
+            threadMillModel.position.set(0, 0.3, -2.8); // Position between tiles (z=3) and character grid (z=7)
+            // threadMillModel.rotation.y = Math.PI ;
+            
+            console.log('Treadbase dimensions:', threadSize, 'Max:', threadMaxDim, 'Applied scale:', threadScale);
+            
+            let meshCount = 0;
+            threadMillModel.traverse((node) => {
+                if (node.isMesh) {
+                    meshCount++;
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                    
+                    // Apply steel-blue color to frame
+                    if (!node.material) {
+                        node.material = new THREE.MeshStandardMaterial();
+                    } else {
+                        node.material = node.material.clone();
+                    }
+                    node.material.color.set(0xf6faff);
+                    node.material.metalness = 0.3;
+                    node.material.roughness = 0.6;
+                }
             });
-
-        // Side/frame/body meshes → flat #b8cbe4 steel-blue
-        } else {
-            node.material = new THREE.MeshStandardMaterial({
-                color: 0x93a7d5,
-                metalness: 0.3,
-                roughness: 0.6
-            });
-        }
-    }
-});
+            console.log('Treadbase meshes found:', meshCount);
             
-            scene.add(object);
+            scene.add(threadMillModel);
+            console.log('Treadbase added to scene at position:', threadMillModel.position);
 
-            // Load a small tray into the treadmill gap (reference placement)
-            fbxLoader.load(TRAY_MODEL_PATH, function(tray) {
-                // Scale and place relative to the machine bounding box centre
-                tray.scale.set(0.32, 0.32, 0.32);
-                const machineBox = new THREE.Box3().setFromObject(object);
-                const mCenter = machineBox.getCenter(new THREE.Vector3());
-                // Position the tray slightly above the machine center and towards the front gap
-                tray.position.set(mCenter.x + 0.21, mCenter.y + 0.2, mCenter.z + 0.2);
-                tray.rotation.y = object.rotation.y;
-                tray.traverse(node => {
+            // Load Plane (Belt) GLTF Model
+            loader.load("Plane.glb", function(gltf) {
+                const beltPlane = gltf.scene;
+                console.log('Plane.glb loaded:', beltPlane);
+                
+                // Calculate scale for belt plane
+                const beltBox = new THREE.Box3().setFromObject(beltPlane);
+                const beltSize = beltBox.getSize(new THREE.Vector3());
+                const beltMaxDim = Math.max(beltSize.x, beltSize.y, beltSize.z);
+                const beltScale = 7.74 / beltMaxDim;
+                
+                beltPlane.scale.setScalar(beltScale);
+                const threadBounds = new THREE.Box3().setFromObject(threadMillModel);
+                const threadCenter = threadBounds.getCenter(new THREE.Vector3());
+                
+                beltPlane.position.set(threadCenter.x, threadCenter.y + 0, threadCenter.z );
+                beltPlane.rotation.y = threadMillModel.rotation.y;
+                
+                console.log('Plane dimensions:', beltSize, 'Max:', beltMaxDim, 'Applied scale:', beltScale);
+                
+                let beltMeshCount = 0;
+                beltPlane.traverse(node => {
                     if (node.isMesh) {
+                        beltMeshCount++;
                         node.castShadow = true;
                         node.receiveShadow = true;
-                        // Give a simple material so it reads well in the scene
-                        node.material = new THREE.MeshStandardMaterial({ color: 0x7e86a6, metalness: 0.15, roughness: 0.55 });
+                        if (!node.material) {
+                            node.material = new THREE.MeshStandardMaterial();
+                        } else {
+                            node.material = node.material.clone();
+                        }
+                        node.material.color.set(0x434476);
+                        node.material.metalness = 0.15;
+                        node.material.roughness = 0.55;
                     }
                 });
-                scene.add(tray);
-            }, undefined, function(err) { console.error('Error loading Tray_@(1).fbx', err); });
-        }, undefined, function(err) {
-            console.error('Error loading Thread mill.fbx', err);
+                console.log('Plane meshes found:', beltMeshCount);
+                
+                scene.add(beltPlane);
+                console.log('Plane added to scene at position:', beltPlane.position);
+            }, function(progress) {
+                console.log('Plane loading progress:', (progress.loaded / progress.total * 100) + '%');
+            }, function(err) { 
+                console.error('Error loading Plane.glb:', err); 
+            });
+        }, function(progress) {
+            console.log('Treadbase loading progress:', (progress.loaded / progress.total * 100) + '%');
+        }, function(err) {
+            console.error('Error loading Treadbase 1.glb:', err);
         });
-
-  
 
         // Load Cube_@@.fbx and create grouped cube arrangement
         const cubeLoader = new FBXLoader();
@@ -527,7 +509,8 @@ function createConveyorBeltTexture() {
                         const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
 
                         const clone = cubeModel.clone();
-                        clone.scale.setScalar(window.game_object.GameProperties.CubeSize.size);
+                        const cubeSize = window.game_object.GameProperties.CubeSize;
+                        clone.scale.set(cubeSize.width, cubeSize.height, cubeSize.depth);
                         clone.position.set((c - cols/2) * cubeSpacing, 0.5, (r - rows/2) * cubeSpacing - 2.5);
 
                         clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
@@ -723,7 +706,10 @@ function createMuzzleFlash(pos) {
 
 // CUBE POP AND BLAST ANIMATION: Squeeze -> Expansion -> Shatter
 function playCubePopAnimation(cube, cubeColor) {
-    const originalScale = window.game_object.GameProperties.CubeSize.size; // 0.03
+    const cubeSize = window.game_object.GameProperties.CubeSize;
+    const originalScaleX = cubeSize.width;
+    const originalScaleY = cubeSize.height;
+    const originalScaleZ = cubeSize.depth;
     const popDuration = 240;
 
     addAnim({
@@ -737,16 +723,20 @@ function playCubePopAnimation(cube, cubeColor) {
                 // 0% -> 40% time: Cube gets thinner on X/Z, stretches tall on Y
                 const squeeze = Math.sin((t / 0.4) * Math.PI);
                 cube.scale.set(
-                    originalScale * (1 - squeeze * 0.4), // Compress width
-                    originalScale * (1 + squeeze * 0.6), // Stretch height (The Pop-up)
-                    originalScale * (1 - squeeze * 0.4)  // Compress depth
+                    originalScaleX * (1 - squeeze * 0.4), // Compress width
+                    originalScaleY * (1 + squeeze * 0.6), // Stretch height (The Pop-up)
+                    originalScaleZ * (1 - squeeze * 0.4)  // Compress depth
                 );
             } else {
                 // STAGE 2: THE BLAST (Rapid expansion before shatter)
                 // 40% -> 100% time: Expands outward rapidly, fades to transparent
                 const blast = (t - 0.4) / 0.6;
                 const expand = 1 + Math.sin(blast * Math.PI) * 0.8; // Puffs out
-                cube.scale.setScalar(originalScale * expand);
+                cube.scale.set(
+                    originalScaleX * expand,
+                    originalScaleY * expand,
+                    originalScaleZ * expand
+                );
                 
                 // Fade all materials to invisible
                 cube.traverse(n => {
@@ -937,31 +927,36 @@ async function performMillTravel(Char, targetTile) {
     // --- Start shooting thread immediately in parallel ---
     shootAtCubes(Char);
 
-    // The Path Heights
-    const h = window.game_object.GameProperties.SpawnHeight; 
-    const mX = threadMillModel.position.x;
-    const mZ = threadMillModel.position.z; 
+    // Calculate treadmill bounds to get exact waypoints
+    const threadBox = new THREE.Box3().setFromObject(threadMillModel);
+    const threadBounds = {
+        minX: threadBox.min.x,
+        maxX: threadBox.max.x,
+        minZ: threadBox.min.z,
+        maxZ: threadBox.max.z,
+        centerX: (threadBox.min.x + threadBox.max.x) / 2,
+        centerZ: (threadBox.min.z + threadBox.max.z) / 2,
+        width: threadBox.max.x - threadBox.min.x,
+        depth: threadBox.max.z - threadBox.min.z
+    };
 
-    // YOUR EXISTING NODES
-    const pEntryStub    = new THREE.Vector3(mX - 2.25, h, mZ + 4.5);
-    const pFrontRight   = new THREE.Vector3(mX + 2.8, h, mZ + 4.5);
-    const pBackRight    = new THREE.Vector3(mX + 3.4, h, mZ - 2.8);
-    const pBackLeft     = new THREE.Vector3(mX - 3.4, h, mZ - 2.8);
+    const h = window.game_object.GameProperties.SpawnHeight;
 
-    // --- ADDED PHASE 5: THE BLUE ARROW NODE ---
-    // Moving from the Back-Left corner down the left rail to the tip
-    const pExitTip      = new THREE.Vector3(mX - 3.4, h, mZ + 2.8); 
-    
-    // THE FINAL JUMP TARGET
+    // EXACT WAYPOINTS based on treadmill bounding box
+    const pEntryStub    = new THREE.Vector3(threadBounds.minX +2, h, threadBounds.maxZ - 0.5);
+    const pFrontRight   = new THREE.Vector3(threadBounds.maxX - 1, h, threadBounds.maxZ - 0.5);
+    const pBackRight    = new THREE.Vector3(threadBounds.maxX - 0.5, h, threadBounds.minZ + 1);
+    const pBackLeft     = new THREE.Vector3(threadBounds.minX +1, h, threadBounds.minZ + 0.5);
+    const pExitTip      = new THREE.Vector3(threadBounds.minX + 0.3, h, threadBounds.maxZ -  2.5);
     const pFinalTile    = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
 
     // --- PHASE 1: JUMP IN ---
     Char.rotation.y = Math.PI / 2; 
     await jumpToPoint(Char, pEntryStub, 700);
-    if (!Char.parent) return; // Char might be destroyed if value hits 0!
+    if (!Char.parent) return;
 
     // --- PHASE 2: TRAVEL RIGHT ---
-    Char.rotation.y = Math.PI/2; 
+    Char.rotation.y = Math.PI / 2; 
     await moveAlongPoint(Char, pFrontRight, 600);
     if (!Char.parent) return;
 
@@ -975,9 +970,8 @@ async function performMillTravel(Char, targetTile) {
     await moveAlongPoint(Char, pBackLeft, 800);
     if (!Char.parent) return;
 
-    // --- PHASE 5: THE BLUE ARROW (MOVE DOWN LEFT RAIL) ---
-    // New step: walk from the back-left corner to the exit tip
-    Char.rotation.y = 0; // Turn to look down toward the arrow tip
+    // --- PHASE 5: EXIT TO FRONT ---
+    Char.rotation.y = 0;
     await moveAlongPoint(Char, pExitTip, 500);
     if (!Char.parent) return;
 
@@ -1184,7 +1178,7 @@ function shiftColumnForward(vacatedRow, col) {
         function animate() {
             requestAnimationFrame(animate);
             const dt = Math.min(clock.getDelta() * 1000, 40); // dt in ms, capped
-            totalTime += dt * 0.001; // Game time in seconds
+            totalTime += dt * 0.0003; // Game time in seconds
             processAnims(dt);
 
             // --- CHARACTER EXCITEMENT LOGIC ---
@@ -1212,13 +1206,6 @@ function shiftColumnForward(vacatedRow, col) {
                     char.position.y = 0.3 + Math.abs(Math.sin(totalTime * 4 + idx)) * 0.05;
                 }
             });
-
-            // --- CONTINUOUS TREADMILL MOVEMENT ---
-            if (movingBeltTex) {
-                // Shift the arrows horizontally based on frame time
-                // -0.006 creates a smooth forward motion
-                movingBeltTex.offset.x -= 0.005; 
-            }
 
             controls.update();
             renderer.render(scene, camera);
