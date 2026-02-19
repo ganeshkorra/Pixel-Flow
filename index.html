@@ -95,9 +95,9 @@ window.game_object = {
     },
 
     GameProperties: { 
-        GridSize: { count: 3 }, 
-        ShootInterval: { amount: 1080 }, 
-        AmmoLevels: { low: 20, high: 40 },
+        GridSize: { count: 3}, 
+        ShootInterval: { amount: 0 }, 
+        AmmoLevels: { low: 0, high: 0 },
         SpawnHeight: 0.85,
         CubeSize: { size: 0.03 },
         LevelSize: { rows: 20, cols: 20 }
@@ -126,7 +126,7 @@ window.game_object = {
         },  
         Background: { 
             name: "Scenario Background",
-            data: "#FFF9F1"
+            data: "#"
         }
     },
         
@@ -158,7 +158,7 @@ window.game_object = {
 
         const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
         // Fixed camera matching reference composition
-        camera.position.set(0, 25, 8);
+        camera.position.set(0, 19, 10);
         camera.lookAt(0, 0.5, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -289,6 +289,7 @@ window.game_object = {
         let baseCharModel = null;
         let globalCharScale = 1.2; // Default, will be updated by loader
         let movingBeltTex = null; // For the animated conveyor belt
+        let totalTime = 0; // Game time for idle animations
 
 function createCharLabelTexture(text) {
     const canvas = document.createElement('canvas');
@@ -495,20 +496,26 @@ function createConveyorBeltTexture() {
         const cubeLoader = new FBXLoader();
         
         // NEW AUTOMATIC LOADER
-        const imgLevelUrl = "Screenshot 2026-02-11 195322.png"; // UPLOAD YOUR IMAGE HERE
+        const imgLevelUrl = "Screenshot 2026-02-18 132325.png"; // UPLOAD YOUR IMAGE HERE
 
         const LEVEL_ROWS = window.game_object.GameProperties.LevelSize.rows;
         const LEVEL_COLS = window.game_object.GameProperties.LevelSize.cols;
 
         parseImageToLevel(imgLevelUrl, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
-            // 1. EXTRACT USEFUL COLORS (Pattern wise) from the pattern (ignore background)
-            let usedCodes = [...new Set(autoPattern.flat())].filter(c => c !== 0);
-            if (usedCodes.length === 0) {
-                console.warn('No mission colors detected from pattern; using all non-background cube colors as a fallback');
-                usedCodes = Object.keys(cubeColorsData).map(Number).filter(k => k !== 0);
-            }
+            // 1. COUNT EVERY CUBE PER COLOR (The Census)
+            const colorCensus = {};
+            autoPattern.forEach(row => {
+                row.forEach(id => {
+                    const color = cubeColorsData[id].code;
+                    colorCensus[color] = (colorCensus[color] || 0) + 1;
+                });
+            });
 
-            // 2. Load Cubes (existing logic) and derive active colors from actually placed cubes
+            // Remove background/black from mission colors
+            activeLevelColors = Object.keys(colorCensus).filter(c => c !== '#000000');
+            console.log('Active Mission Colors (from level pattern):', activeLevelColors, 'Census:', colorCensus);
+
+            // 2. Load Cubes and place them
             cubeLoader.load(window.game_object.GameElements.ObstacleModel.data, (cubeModel) => {
                 const rows = autoPattern.length;
                 const cols = autoPattern[0].length;
@@ -538,73 +545,41 @@ function createConveyorBeltTexture() {
                 }
                 updateObstacleStatus();
 
-                // Derive mission colors from the placed cubes (robust against mapping/sampling differences)
-                const colorCounts = {};
-                cubesToSmash.forEach(c => {
-                    const col = c.userData.colorName;
-                    colorCounts[col] = (colorCounts[col] || 0) + 1;
-                });
-
-                // Exclude black/background and sort by frequency
-                const sortedColors = Object.keys(colorCounts)
-                    .filter(k => k && k !== '#000000')
-                    .sort((a,b) => colorCounts[b] - colorCounts[a]);
-
-                // Use up to top 3 colors for this mission
-                const topCount = Math.min(3, sortedColors.length);
-                activeLevelColors = sortedColors.slice(0, topCount);
-                console.log('Active Mission Colors (from placed cubes):', activeLevelColors, 'counts:', colorCounts);
-
-                // Build spawn color distribution for the initial GRID x GRID chars
-                function buildSpawnDistribution(totalSlots) {
-                    const totalCubes = Object.values(colorCounts).reduce((s,v) => s+v, 0) || 1;
-                    const slots = [];
-                    activeLevelColors.forEach(col => {
-                        const proportion = (colorCounts[col] || 0) / totalCubes;
-                        const want = Math.round(proportion * totalSlots);
-                        for (let i=0;i<want;i++) slots.push(col);
+                // 3. DEFINE THE FINITE 9 CHARACTERS WITH MATHEMATICAL AMMO
+                const pigPlan = [];
+                for (let i = 0; i < GRID * GRID; i++) {
+                    // Assign colors from mission colors only
+                    pigPlan.push({
+                        color: activeLevelColors[i % activeLevelColors.length]
                     });
-                    // Fill or trim to match totalSlots
-                    while (slots.length < totalSlots) slots.push(activeLevelColors[0]);
-                    while (slots.length > totalSlots) slots.pop();
-                    // shuffle
-                    for (let i = slots.length - 1; i > 0; i--) {
-                        const j = Math.floor(Math.random() * (i + 1));
-                        [slots[i], slots[j]] = [slots[j], slots[i]];
-                    }
-                    return slots;
                 }
 
-                const totalGrid = GRID * GRID;
-                const spawnColors = buildSpawnDistribution(totalGrid);
+                // 4. DISTRIBUTE AMMO FAIRLY
+                // Math: Ammo per character = (Total Cubes of color X) / (Total Characters of color X) + 2 buffer
+                pigPlan.forEach(plan => {
+                    const charCountOfThisColor = pigPlan.filter(p => p.color === plan.color).length;
+                    const totalCubesNeeded = colorCensus[plan.color];
+                    plan.ammo = Math.ceil(totalCubesNeeded / charCountOfThisColor) + 2;
+                });
 
-                // Count how many initial chars per color we will spawn
-                const spawnCounts = {};
-                spawnColors.forEach(c => spawnCounts[c] = (spawnCounts[c] || 0) + 1);
+                console.log('Pig Plan (9 characters with calculated ammo):', pigPlan);
 
-                // 3. GENERATE INITIAL PIGS AFTER CUBES ARE PLACED
-                function spawnInitialGrid() {
+                // 5. SPAWN THE 9 FINITE CHARACTERS
+                function spawnFiniteGrid() {
                     if (!baseCharModel) {
-                        // Try again shortly until model is loaded
-                        setTimeout(spawnInitialGrid, 100);
+                        setTimeout(spawnFiniteGrid, 100);
                         return;
                     }
-                    let idx = 0;
-                    for (let row = 0; row < GRID; row++) {
-                        for (let col = 0; col < GRID; col++) {
-                            const myMissionColor = spawnColors[idx++];
-                            // Distribute ammo so total ammo across initial chars approximates cube count
-                            const needed = colorCounts[myMissionColor] || 1;
-                            const perChar = Math.max(1, Math.ceil(needed / (spawnCounts[myMissionColor] || 1)));
-                            console.log(`Spawning initial pig at ${row},${col} with color ${myMissionColor} ammo ${perChar}`);
-                            spawnStartingPig(row, col, myMissionColor);
-                            // set the ammo explicitly on the spawned char (spawnStartingPig sets random ammo currently)
-                            const placed = occupancy[row][col];
-                            if (placed) { placed.userData.value = perChar; updateCharLabel(placed); }
+                    let pIdx = 0;
+                    for (let r = 0; r < GRID; r++) {
+                        for (let c = 0; c < GRID; c++) {
+                            const plan = pigPlan[pIdx];
+                            createStartingCharacter(r, c, plan.color, plan.ammo);
+                            pIdx++;
                         }
                     }
                 }
-                spawnInitialGrid();
+                spawnFiniteGrid();
             });
         });
 
@@ -746,6 +721,52 @@ function createMuzzleFlash(pos) {
     });
 }
 
+// CUBE POP AND BLAST ANIMATION: Squeeze -> Expansion -> Shatter
+function playCubePopAnimation(cube, cubeColor) {
+    const originalScale = window.game_object.GameProperties.CubeSize.size; // 0.03
+    const popDuration = 240;
+
+    addAnim({
+        elapsed: 0, duration: popDuration,
+        update(dt) {
+            this.elapsed += dt;
+            const t = this.elapsed / this.duration;
+
+            if (t < 0.4) {
+                // STAGE 1: THE SQUEEZE (Compressive reaction to bullet impact)
+                // 0% -> 40% time: Cube gets thinner on X/Z, stretches tall on Y
+                const squeeze = Math.sin((t / 0.4) * Math.PI);
+                cube.scale.set(
+                    originalScale * (1 - squeeze * 0.4), // Compress width
+                    originalScale * (1 + squeeze * 0.6), // Stretch height (The Pop-up)
+                    originalScale * (1 - squeeze * 0.4)  // Compress depth
+                );
+            } else {
+                // STAGE 2: THE BLAST (Rapid expansion before shatter)
+                // 40% -> 100% time: Expands outward rapidly, fades to transparent
+                const blast = (t - 0.4) / 0.6;
+                const expand = 1 + Math.sin(blast * Math.PI) * 0.8; // Puffs out
+                cube.scale.setScalar(originalScale * expand);
+                
+                // Fade all materials to invisible
+                cube.traverse(n => {
+                    if (n.material) {
+                        n.material.transparent = true;
+                        n.material.opacity = 1 - blast;
+                    }
+                });
+            }
+
+            if (t >= 1) {
+                createImpactEffect(cube.position.clone(), cubeColor); // Spawn final shards
+                scene.remove(cube);
+                return true;
+            }
+            return false;
+        }
+    });
+}
+
 // 2. Impact Shard Effect (At the Cube)
 function createImpactEffect(pos, color) {
     for (let i = 0; i < 4; i++) {
@@ -775,16 +796,17 @@ function createImpactEffect(pos, color) {
     }
 }
 
-// NEW HIGH-QUALITY AMMO: White Glowing Sphere with a long Trail
-function createBullet(pig, to, color) {
+// NEW HIGH-QUALITY AMMO: White Glowing Sphere with a long Trail + Cube Pop Trigger
+function createBullet(pig, targetCube, color) {
     const from = getMouthPosition(pig);
+    const targetPos = targetCube.position.clone();
     
     // Core of the bullet (Glowing White Ball)
     const bulletGroup = new THREE.Group();
     
     // 1. The Head
     const head = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2, 16, 16),
+        new THREE.SphereGeometry(0.18, 16, 16),
         new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 10, toneMapped: false })
     );
     
@@ -809,11 +831,12 @@ function createBullet(pig, to, color) {
             
             // Starts fast, finishes smoothly (Snappy!)
             const easedT = 1 - Math.pow(1 - t, 3);
-            bulletGroup.position.lerpVectors(from, to, easedT);
-            bulletGroup.lookAt(to); // Points the trail exactly behind the head
+            bulletGroup.position.lerpVectors(from, targetPos, easedT);
+            bulletGroup.lookAt(targetPos); // Points the trail exactly behind the head
 
             if (t >= 1) { 
-                createImpactEffect(to, color); // The colored explosion at the cube
+                // --- TRIGGER THE CUBE POP AND BLAST UPON BULLET IMPACT ---
+                playCubePopAnimation(targetCube, color);
                 scene.remove(bulletGroup); 
                 return true; 
             }
@@ -827,28 +850,30 @@ async function shootAtCubes(pig) {
     const myColor = pig.userData.colorName;
 
     while (pig.userData.moving && pig.userData.value > 0) {
-        let closest = null;
+        let target = null;
         let minDist = 7;
 
         cubesToSmash.forEach((cube, index) => {
             if (cube.userData.colorName === myColor && !cube.userData.blocked) {
                 const dist = pig.position.distanceTo(cube.position);
-                if (dist < minDist) { minDist = dist; closest = { cube, index }; }
+                if (dist < minDist) { minDist = dist; target = { cube, index }; }
             }
         });
 
-        if (closest) {
-            const muzzlePos = getMouthPosition(pig);
+        if (target) {
+            // PRECISION TIMING: Mark cube as "gone" immediately for other pigs
+            const targetRef = target.cube;
+            cubesToSmash.splice(target.index, 1);
             
-            // Trigger ALL effects simultaneously
-            applyRecoil(pig);       // 1. Character Kickback
-            createMuzzleFlash(muzzlePos); // 2. Snout light pop
-            createBullet(pig, closest.cube.position.clone(), myColor); // 3. The Glow Bullet
+            // Trigger character effects
+            applyRecoil(pig);                      // 1. Character Kickback
+            createMuzzleFlash(getMouthPosition(pig)); // 2. Snout light pop
             
-            // Process damage
-            scene.remove(closest.cube);
-            cubesToSmash.splice(closest.index, 1);
-            updateObstacleStatus(); // reveals inner cubes
+            // SEND CUBE REFERENCE: The bullet will trigger the pop animation on arrival
+            createBullet(pig, targetRef, myColor); // 3. The Glow Bullet + Pop Animation
+            
+            // Recalculate inner/outer cube status (reveals previously blocked cubes)
+            updateObstacleStatus();
             
             pig.userData.value--;
             updateCharLabel(pig);
@@ -918,8 +943,8 @@ async function performMillTravel(Char, targetTile) {
     const mZ = threadMillModel.position.z; 
 
     // YOUR EXISTING NODES
-    const pEntryStub    = new THREE.Vector3(mX - 2, h, mZ + 4);
-    const pFrontRight   = new THREE.Vector3(mX + 2.8, h, mZ + 4);
+    const pEntryStub    = new THREE.Vector3(mX - 2.25, h, mZ + 4.5);
+    const pFrontRight   = new THREE.Vector3(mX + 2.8, h, mZ + 4.5);
     const pBackRight    = new THREE.Vector3(mX + 3.4, h, mZ - 2.8);
     const pBackLeft     = new THREE.Vector3(mX - 3.4, h, mZ - 2.8);
 
@@ -1036,46 +1061,45 @@ async function performMillTravel(Char, targetTile) {
     }
 }
 
-// Spawn a starting pig that uses a mission color (called during initial grid creation)
-function spawnStartingPig(row, col, missionColor) {
+// Spawn a finite starting character with calculated ammo
+function createStartingCharacter(row, col, color, ammo) {
     if (!baseCharModel) return;
-    const newChar = baseCharModel.clone(true);
-    newChar.scale.setScalar(globalCharScale);
+    const clone = baseCharModel.clone(true);
+    clone.scale.setScalar(globalCharScale);
 
-    const val = Math.random() > 0.5 ? 20 : 40;
-    newChar.userData = {
-        value: val,
+    clone.userData = {
+        value: ammo, // <--- MATHEMATICAL AMMO
+        colorName: color,
         gridRow: row,
         gridCol: col,
         moving: false,
         onTile: false,
-        parentChar: newChar,
-        colorName: missionColor
+        parentChar: clone
     };
 
-    const label = createCharLabel(newChar);
+    const label = createCharLabel(clone);
     label.position.set(0, 4, 0);
     label.renderOrder = 999;
-    newChar.add(label);
+    clone.add(label);
 
-    newChar.traverse((node) => {
+    clone.traverse((node) => {
         if (node.isMesh) {
             node.castShadow = true;
             node.receiveShadow = true;
             node.material = node.material.clone();
-            if (node.material.color) node.material.color.set(missionColor);
-            node.userData.parentChar = newChar;
+            if (node.material.color) node.material.color.set(color);
+            node.userData.parentChar = clone;
         }
     });
 
     const x = (col - Math.floor(GRID/2)) * spacingGlobal;
     const z = (row - Math.floor(GRID/2)) * spacingGlobal + 7;
-    newChar.position.set(x, 0.5, z);
-    newChar.rotation.y = Math.PI / 2;
+    clone.position.set(x, 0.5, z);
+    clone.rotation.y = Math.PI / 2;
 
-    scene.add(newChar);
-    occupancy[row][col] = newChar;
-    Chars.push(newChar);
+    scene.add(clone);
+    occupancy[row][col] = clone;
+    Chars.push(clone);
 }
 
 function spawnNewChar(row, col) {
@@ -1140,11 +1164,9 @@ function shiftColumnForward(vacatedRow, col) {
         }
     }
 
-    // --- NEW LOGIC: FILL THE EMPTY SPACE AT THE BACK ---
-    // If we shifted the whole column, row 2 is now empty.
-    setTimeout(() => {
-        spawnNewChar(2, col); 
-    }, 200); // Small delay for better visual "waiting list" effect
+    // --- DISABLED: NO RESPAWNING ---
+    // The game now has exactly 9 finite characters with calculated ammo.
+    // No new characters will spawn. The column will show empty space once exhausted.
 }
 
 
@@ -1162,7 +1184,34 @@ function shiftColumnForward(vacatedRow, col) {
         function animate() {
             requestAnimationFrame(animate);
             const dt = Math.min(clock.getDelta() * 1000, 40); // dt in ms, capped
+            totalTime += dt * 0.001; // Game time in seconds
             processAnims(dt);
+
+            // --- CHARACTER EXCITEMENT LOGIC ---
+            // Target characters in the 3x3 grid
+            for (let r = 0; r < GRID; r++) {
+                for (let c = 0; c < GRID; c++) {
+                    const char = occupancy[r][c];
+                    if (char && !char.userData.moving) {
+                        // 1. Swing back and forth (X-rotation for sway)
+                        // Offset by grid position so they don't move like robots
+                        char.rotation.x = Math.sin(totalTime * 8 + r + c) * 0.15;
+
+                        // 2. Small "nervous" breathing hop
+                        char.position.y = 0.5 + Math.abs(Math.sin(totalTime * 4 + r + c)) * 0.05;
+                    }
+                }
+            }
+
+            // Target characters sitting on Tiles
+            tileOccupancy.forEach((char, idx) => {
+                if (char && !char.userData.moving) {
+                    // Sway back and forth
+                    char.rotation.x = Math.sin(totalTime * 8 + idx) * 0.15;
+                    // Sitting breath hop
+                    char.position.y = 0.3 + Math.abs(Math.sin(totalTime * 4 + idx)) * 0.05;
+                }
+            });
 
             // --- CONTINUOUS TREADMILL MOVEMENT ---
             if (movingBeltTex) {
