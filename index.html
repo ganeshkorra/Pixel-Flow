@@ -72,7 +72,7 @@
 window.game_object = {
     GameElements: {
     CharModel: { name: "Character Model", data: "pig.glb" },
-    ObstacleModel: { name: "Cube Unit", data: "Cube_@@.fbx" },
+    ObstacleModel: { name: "Cube Unit", data: "Cube.glb" },
         // Matrix for the Moon/Character Pixel Art
         CharacterPattern: [
             [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
@@ -99,7 +99,7 @@ window.game_object = {
         ShootInterval: { amount: 0 }, 
         AmmoLevels: { low: 0, high: 0 },
         SpawnHeight: 0.85,
-        CubeSize: { width: 0.03, height:  0.07, depth: 0.03 },
+        CubeSize: { width: 3, height:  7, depth: 3 },
         LevelSize: { rows: 20, cols: 20 }
     },
 
@@ -357,29 +357,226 @@ function updateCharLabel(Char) {
             spacingGlobal = spacing;
             // Initial grid characters will be spawned after level analysis
 
-            // Create 5 tiles below thread mill, above Char grid (centered horizontally)
+            // Create 5 styled tiles below thread mill, above Char grid (centered horizontally)
             tiles = [];
             const tileCount = 5;
             const tileSize = Math.min(spacing * 0.9, 1.2);
-            const tileHeight = 0.06;
+            const tileHeight = 0.08;
             // z position: between thread mill and Char grid with more separation
             const zTiles = 3;
             tileOccupancy = Array(tileCount).fill(null);
+            
+            // Function to create a styled tile with base and border
+            function createStyledTile(x, z) {
+                const tileGroup = new THREE.Group();
+                
+                // Base tile - main platform
+                const baseGeom = new THREE.BoxGeometry(tileSize, tileHeight, tileSize);
+                const baseMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x1f2937,
+                    metalness: 0.3,
+                    roughness: 0.6
+                });
+                const baseMesh = new THREE.Mesh(baseGeom, baseMat);
+                baseMesh.position.y = tileHeight / 2;
+                baseMesh.castShadow = false;
+                baseMesh.receiveShadow = true;
+                tileGroup.add(baseMesh);
+                
+                // Border rim - top edge highlight
+                const rimGeom = new THREE.TorusGeometry(tileSize * 0.48, tileSize * 0.05, 8, 32);
+                const rimMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x6366f1,
+                    metalness: 0.6,
+                    roughness: 0.3,
+                    emissive: 0x4f46e5,
+                    emissiveIntensity: 0.5
+                });
+                const rimMesh = new THREE.Mesh(rimGeom, rimMat);
+                rimMesh.position.y = tileHeight + 0.05;
+                rimMesh.rotation.x = Math.PI / 2;
+                rimMesh.receiveShadow = false;
+                rimMesh.castShadow = false;
+                tileGroup.add(rimMesh);
+                
+                // Light indicator sphere (glowing center)
+                const indicatorGeom = new THREE.SphereGeometry(tileSize * 0.15, 16, 16);
+                const indicatorMat = new THREE.MeshStandardMaterial({ 
+                    color: 0x3b82f6,
+                    emissive: 0x60a5fa,
+                    emissiveIntensity: 0.8,
+                    metalness: 0.4
+                });
+                const indicatorMesh = new THREE.Mesh(indicatorGeom, indicatorMat);
+                indicatorMesh.position.y = tileHeight + 0.1;
+                indicatorMesh.receiveShadow = false;
+                indicatorMesh.castShadow = false;
+                tileGroup.add(indicatorMesh);
+                
+                tileGroup.position.set(x, 0, z);
+                tileGroup.userData = { 
+                    baseColor: 0x1f2937,
+                    rimMesh: rimMesh,
+                    indicatorMesh: indicatorMesh,
+                    baseMesh: baseMesh
+                };
+                
+                return tileGroup;
+            }
+            
             for (let i = 0; i < tileCount; i++) {
-                const geom = new THREE.BoxGeometry(tileSize, tileHeight, tileSize);
-                const mat = new THREE.MeshStandardMaterial({ color: 0x2b2d46 });
-                const tile = new THREE.Mesh(geom, mat);
-                tile.receiveShadow = true;
-                tile.castShadow = false;
-                tile.position.x = (i - Math.floor(tileCount/2)) * spacing;
-                tile.position.z = zTiles;
-                tile.position.y = tileHeight / 2 + 0.01;
+                const xPos = (i - Math.floor(tileCount/2)) * spacing;
+                const tile = createStyledTile(xPos, zTiles);
                 scene.add(tile);
                 tiles.push(tile);
             }
 
         }, undefined, function(err){
             console.error('Error loading Char.glb', err);
+        });
+
+        // Function to update tile appearance when character lands
+        function updateTileAppearance(tileIndex, characterColor) {
+            if (tileIndex >= 0 && tileIndex < tiles.length) {
+                const tile = tiles[tileIndex];
+                const rimMesh = tile.userData.rimMesh;
+                const indicatorMesh = tile.userData.indicatorMesh;
+                
+                // Update rim color to match character
+                rimMesh.material.color.setStyle(characterColor);
+                rimMesh.material.emissive.setStyle(characterColor);
+                
+                // Update indicator glow
+                indicatorMesh.material.color.setStyle(characterColor);
+                indicatorMesh.material.emissive.setStyle(characterColor);
+                
+                // Pulse animation on landing
+                addAnim({
+                    elapsed: 0, duration: 300,
+                    update(dt) {
+                        this.elapsed += dt;
+                        const t = this.elapsed / this.duration;
+                        const pulseFactor = 1 + Math.sin(t * Math.PI * 2) * 0.3;
+                        indicatorMesh.scale.setScalar(pulseFactor);
+                        if (t >= 1) {
+                            indicatorMesh.scale.setScalar(1);
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+            }
+        }
+
+        // Function to reset tile to default appearance
+        function resetTileAppearance(tileIndex) {
+            if (tileIndex >= 0 && tileIndex < tiles.length) {
+                const tile = tiles[tileIndex];
+                const rimMesh = tile.userData.rimMesh;
+                const indicatorMesh = tile.userData.indicatorMesh;
+                
+                // Reset to default colors
+                rimMesh.material.color.setHex(0x6366f1);
+                rimMesh.material.emissive.setHex(0x4f46e5);
+                indicatorMesh.material.color.setHex(0x3b82f6);
+                indicatorMesh.material.emissive.setHex(0x60a5fa);
+                indicatorMesh.scale.setScalar(1);
+            }
+        }
+
+        // Material definitions based on reference image
+        // Slot: Darker blue-purple tone
+        const slotMaterialConfig = {
+            color: 0xbac6ff,
+            metalness: 0.35,
+            roughness: 0.4,
+            emissive: 0xaebfed,
+            emissiveIntensity: 0.3
+        };
+        
+        // Cube: Lighter gray-blue accent tone
+        const cubeMaterialConfig = {
+            color: 0x687a9e,
+            metalness: 0.35,
+            roughness: 0.4,
+            emissive: 0x505a6f,
+            emissiveIntensity: 0.3
+        };
+
+        // Load Slot GLTF Model
+        let slotModel = null;
+        loader.load("Slot.glb", function(gltf) {
+            slotModel = gltf.scene;
+            console.log('Slot.glb loaded:', slotModel);
+            
+            // Calculate appropriate scale based on model size
+            const slotBox = new THREE.Box3().setFromObject(slotModel);
+            const slotSize = slotBox.getSize(new THREE.Vector3());
+            const slotMaxDim = Math.max(slotSize.x, slotSize.y, slotSize.z);
+            const slotScale = 2.0 / slotMaxDim; // Scale appropriately
+            
+            slotModel.scale.setScalar(slotScale);
+            slotModel.position.set(-3.4, 0, 0.8); // Position in front of treadmill
+            
+            console.log('Slot dimensions:', slotSize, 'Max:', slotMaxDim, 'Applied scale:', slotScale);
+            
+            let slotMeshCount = 0;
+            slotModel.traverse((node) => {
+                if (node.isMesh) {
+                    slotMeshCount++;
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                    
+                    // Apply slot-specific material color
+                    node.material = new THREE.MeshStandardMaterial(slotMaterialConfig);
+                }
+            });
+            console.log('Slot meshes found:', slotMeshCount);
+            
+            scene.add(slotModel);
+            console.log('Slot added to scene at position:', slotModel.position);
+        }, function(progress) {
+            console.log('Slot loading progress:', (progress.loaded / progress.total * 100) + '%');
+        }, function(err) {
+            console.error('Error loading Slot.glb:', err);
+        });
+
+        // Load Cube.glb as Decoration
+        let decorativeCubeModel = null;
+        loader.load("Cube.glb", function(gltf) {
+            decorativeCubeModel = gltf.scene;
+            console.log('Cube.glb decoration loaded:', decorativeCubeModel);
+            
+            // Calculate appropriate scale based on model size
+            const cubeBox = new THREE.Box3().setFromObject(decorativeCubeModel);
+            const cubeSize = cubeBox.getSize(new THREE.Vector3());
+            const cubeMaxDim = Math.max(cubeSize.x, cubeSize.y, cubeSize.z);
+            const cubeScale = 1.5 / cubeMaxDim; // Scale appropriately
+            
+            decorativeCubeModel.scale.setScalar(cubeScale);
+            decorativeCubeModel.position.set(-3.9, -1, 0.8); // Position on right side as decoration
+            
+            console.log('Cube dimensions:', cubeSize, 'Max:', cubeMaxDim, 'Applied scale:', cubeScale);
+            
+            let cubeMeshCount = 0;
+            decorativeCubeModel.traverse((node) => {
+                if (node.isMesh) {
+                    cubeMeshCount++;
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                    
+                    // Apply cube-specific material color
+                    node.material = new THREE.MeshStandardMaterial(cubeMaterialConfig);
+                }
+            });
+            console.log('Cube decoration meshes found:', cubeMeshCount);
+            
+            scene.add(decorativeCubeModel);
+            console.log('Cube decoration added to scene at position:', decorativeCubeModel.position);
+        }, function(progress) {
+            console.log('Cube decoration loading progress:', (progress.loaded / progress.total * 100) + '%');
+        }, function(err) {
+            console.error('Error loading Cube.glb decoration:', err);
         });
 
         // Load Treadbase GLTF Model
@@ -474,9 +671,7 @@ function updateCharLabel(Char) {
             console.error('Error loading Treadbase 1.glb:', err);
         });
 
-        // Load Cube_@@.fbx and create grouped cube arrangement
-        const cubeLoader = new FBXLoader();
-        
+        // Load Cube.glb and create grouped cube arrangement
         // NEW AUTOMATIC LOADER
         const imgLevelUrl = "Screenshot 2026-02-18 132325.png"; // UPLOAD YOUR IMAGE HERE
 
@@ -498,7 +693,8 @@ function updateCharLabel(Char) {
             console.log('Active Mission Colors (from level pattern):', activeLevelColors, 'Census:', colorCensus);
 
             // 2. Load Cubes and place them
-            cubeLoader.load(window.game_object.GameElements.ObstacleModel.data, (cubeModel) => {
+            loader.load(window.game_object.GameElements.ObstacleModel.data, (gltf) => {
+                const cubeModel = gltf.scene;
                 const rows = autoPattern.length;
                 const cols = autoPattern[0].length;
                 const cubeSpacing = 0.24;
@@ -814,7 +1010,7 @@ function createBullet(pig, targetCube, color) {
     scene.add(bulletGroup);
 
     addAnim({
-        elapsed: 0, duration: 180, // High speed flight
+        elapsed: 0, duration: 100, // Faster bullet flight
         update(dt) {
             this.elapsed += dt;
             const t = Math.min(this.elapsed / this.duration, 1);
@@ -871,13 +1067,16 @@ async function shootAtCubes(pig) {
             // Safety check for empty ammo
             if (pig.userData.value <= 0) {
                 const idx = pig.userData.currentTileIndex;
-                if (idx !== undefined && tileOccupancy[idx] === pig) tileOccupancy[idx] = null;
+                if (idx !== undefined && tileOccupancy[idx] === pig) {
+                    tileOccupancy[idx] = null;
+                    resetTileAppearance(idx); // Reset tile when character is removed
+                }
                 scene.remove(pig);
                 pig.userData.moving = false;
                 return;
             }
         }
-        await new Promise(r => setTimeout(r, 220)); 
+        await new Promise(r => setTimeout(r, 50)); 
     }
 }
 
@@ -982,6 +1181,12 @@ async function performMillTravel(Char, targetTile) {
 
     Char.userData.onTile = true;
     Char.userData.moving = false;
+    
+    // Update tile appearance to match character color
+    const tileIdx = Char.userData.currentTileIndex;
+    if (tileIdx !== undefined) {
+        updateTileAppearance(tileIdx, Char.userData.colorName);
+    }
 }
    function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -1014,6 +1219,7 @@ async function performMillTravel(Char, targetTile) {
             const currentSlot = Char.userData.currentTileIndex;
             if (currentSlot !== undefined) {
                 tileOccupancy[currentSlot] = null; // SLOT IS NOW FREE
+                resetTileAppearance(currentSlot); // Reset tile color
             }
             Char.userData.onTile = false; 
         } else {
