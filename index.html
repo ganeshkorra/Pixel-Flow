@@ -290,6 +290,8 @@ camera.lookAt(0, 0, 0);
         let baseCharModel = null;
         let globalCharScale = 1.2; // Default, will be updated by loader
         let totalTime = 0; // Game time for idle animations
+        const squareClones = []; // Store square references for animation
+        let nextSquareIndex = 0; // Track which square to activate next
 
 function createCharLabelTexture(text) {
     const canvas = document.createElement('canvas');
@@ -502,6 +504,15 @@ function updateCharLabel(Char) {
             emissive: 0x505a6f,
             emissiveIntensity: 0.3
         };
+        
+        // Square: Brighter variant inside Slot for visual distinction
+        const squareMaterialConfig = {
+            color: 0x00BFFF,
+            metalness: 0.2,
+            roughness: 0.3,
+            emissive: 0x00BFFF,
+            emissiveIntensity: 1.2
+        };
 
         // Load Slot GLTF Model
         let slotModel = null;
@@ -577,6 +588,76 @@ function updateCharLabel(Char) {
             console.log('Cube decoration loading progress:', (progress.loaded / progress.total * 100) + '%');
         }, function(err) {
             console.error('Error loading Cube.glb decoration:', err);
+        });
+
+        // Load Square.glb Inside Slot
+        let squareModel = null;
+        loader.load("Square.glb", function(gltf) {
+            squareModel = gltf.scene;
+            console.log('Square.glb loaded:', squareModel);
+            
+            // Calculate appropriate scale based on model size
+            const squareBox = new THREE.Box3().setFromObject(squareModel);
+            const squareSize = squareBox.getSize(new THREE.Vector3());
+            const squareMaxDim = Math.max(squareSize.x, squareSize.y, squareSize.z);
+            const squareScale = 1 / squareMaxDim; // Scale slightly smaller than slot
+            
+            squareModel.scale.setScalar(squareScale);
+            
+            console.log('Square dimensions:', squareSize, 'Max:', squareMaxDim, 'Applied scale:', squareScale);
+            
+            // Spawn 3 square clones in the slot with different positions
+            const squarePositions = [
+                { x: -3.0, y: 0.05, z: 0.8 },   // Center back
+                { x: -2.8, y: 0.05, z: 0.8 },   // Front left
+                { x: -2.6, y: 0.05, z: 0.8 }    // Front right
+            ];
+            
+            // Create blue material for squares
+            const blueMaterial = new THREE.MeshStandardMaterial({
+                color: 0x3c4557,
+                metalness: 0.0,
+                roughness: 0.2,
+                emissive: 0x3c4557,
+                emissiveIntensity: 2.0,
+                toneMapped: false
+            });
+            
+            squarePositions.forEach((pos, idx) => {
+                const squareClone = squareModel.clone(true);
+                squareClone.position.set(pos.x, pos.y, pos.z);
+                squareClone.userData = { originalPos: new THREE.Vector3(pos.x, pos.y, pos.z) }; // Store original position
+                
+                // Check if model has meshes
+                let hasMesh = false;
+                squareClone.traverse((node) => {
+                    if (node.isMesh) {
+                        hasMesh = true;
+                        if (node.material) node.material.dispose();
+                        node.material = blueMaterial.clone();
+                        node.castShadow = true;
+                        node.receiveShadow = true;
+                    }
+                });
+                
+                // If no meshes found, create a visible blue box
+                if (!hasMesh) {
+                    const boxGeometry = new THREE.BoxGeometry(0.3, 0.1, 0.3);
+                    const blueMesh = new THREE.Mesh(boxGeometry, blueMaterial.clone());
+                    blueMesh.castShadow = true;
+                    blueMesh.receiveShadow = true;
+                    squareClone.add(blueMesh);
+                    console.log(`Square ${idx + 1} - No mesh found in model, created blue box`);
+                }
+                
+                squareClones.push(squareClone); // Store reference for later animation
+                scene.add(squareClone);
+                console.log(`Square ${idx + 1} added to scene at position:`, squareClone.position);
+            });
+        }, function(progress) {
+            console.log('Square loading progress:', (progress.loaded / progress.total * 100) + '%');
+        }, function(err) {
+            console.error('Error loading Square.glb:', err);
         });
 
         // Load Treadbase GLTF Model
@@ -953,6 +1034,124 @@ function playCubePopAnimation(cube, cubeColor) {
     });
 }
 
+// SQUARE POP, FLIP AND MOVE ANIMATION: When character is clicked, activate entry square
+function activateSquareAtEntry(character) {
+    if (squareClones.length === 0) return;
+    
+    const square = squareClones[nextSquareIndex % squareClones.length];
+    nextSquareIndex++;
+    
+    // Store reference to active square on character so it can be removed later
+    if (character) {
+        character.userData.activeSquare = square;
+    }
+    
+    const mX = 0, mZ = -3.5, h = 1;
+    
+    const p1 = new THREE.Vector3(mX-2, h, mZ+4);      // Entry
+    const p2 = new THREE.Vector3(mX+2.8, h, mZ+4);    // Corner FR
+    const p3 = new THREE.Vector3(mX+3.4, h, mZ-2.8);  // Corner BR
+    const p4 = new THREE.Vector3(mX-3.4, h, mZ-2.8);  // Corner BL
+    const p5 = new THREE.Vector3(mX-4.4, h, mZ+2.8);  // Exit
+    
+    const startPos = square.position.clone();
+    const startQuat = square.quaternion.clone();
+    
+    // Calculate final flat rotation (backward flip around Z-axis: -90 degrees)
+    const backwardFlip = new THREE.Quaternion();
+    backwardFlip.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
+    const flatQuat = new THREE.Quaternion().multiplyQuaternions(backwardFlip, startQuat);
+    
+    // PHASE 1: Flip backward 90° + Move to entry (600ms)
+    addAnim({
+        elapsed: 0, duration: 600,
+        update(dt) {
+            this.elapsed += dt;
+            const t = Math.min(this.elapsed / this.duration, 1);
+            
+            // Move from slot to entry
+            square.position.lerpVectors(startPos, p1, t);
+            
+            // Smoothly rotate backward to flat
+            const flipAmount = -t * Math.PI / 2;
+            const flipQuat = new THREE.Quaternion();
+            flipQuat.setFromAxisAngle(new THREE.Vector3(0, 0, 1), flipAmount);
+            square.quaternion.multiplyQuaternions(flipQuat, startQuat);
+            
+            if (t >= 1) {
+                square.quaternion.copy(flatQuat);
+                return true;
+            }
+            return false;
+        }
+    });
+    
+    // PHASE 2: P1 -> P2 (600ms) - Stay flat under character
+    setTimeout(() => {
+        addAnim({
+            elapsed: 0, duration: 600,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                square.position.lerpVectors(p1, p2, t);
+                square.quaternion.copy(flatQuat);
+                if (t >= 1) return true;
+                return false;
+            }
+        });
+    }, 600);
+    
+    // PHASE 3: P2 -> P3 (600ms)
+    setTimeout(() => {
+        addAnim({
+            elapsed: 0, duration: 900,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                square.position.lerpVectors(p2, p3, t);
+                square.quaternion.copy(flatQuat);
+                if (t >= 1) return true;
+                return false;
+            }
+        });
+    }, 1200);
+    
+    // PHASE 4: P3 -> P4 (800ms)
+    setTimeout(() => {
+        addAnim({
+            elapsed: 0, duration: 800,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                square.position.lerpVectors(p3, p4, t);
+                square.quaternion.copy(flatQuat);
+                if (t >= 1) return true;
+                return false;
+            }
+        });
+    }, 1800);
+    
+    // PHASE 5: P4 -> P5 (500ms) - Final exit, then reset back to slot
+    setTimeout(() => {
+        addAnim({
+            elapsed: 0, duration: 500,
+            update(dt) {
+                this.elapsed += dt;
+                const t = Math.min(this.elapsed / this.duration, 1);
+                square.position.lerpVectors(p4, p5, t);
+                square.quaternion.copy(flatQuat);
+                if (t >= 1) {
+                    // Reset square back to original slot position
+                    square.position.copy(square.userData.originalPos);
+                    square.quaternion.copy(startQuat);
+                    return true;
+                }
+                return false;
+            }
+        });
+    }, 2600);
+}
+
 // 2. Impact Shard Effect (At the Cube)
 function createImpactEffect(pos, color) {
     for (let i = 0; i < 4; i++) {
@@ -1071,6 +1270,10 @@ async function shootAtCubes(pig) {
                     tileOccupancy[idx] = null;
                     resetTileAppearance(idx); // Reset tile when character is removed
                 }
+                // Remove active square if character has one
+                if (pig.userData.activeSquare) {
+                    scene.remove(pig.userData.activeSquare);
+                }
                 scene.remove(pig);
                 pig.userData.moving = false;
                 return;
@@ -1119,74 +1322,76 @@ function jumpToPoint(obj, target, duration) {
     });
 }
 
-async function performMillTravel(Char, targetTile) {
-    if (!threadMillModel) return;
-    Char.userData.moving = true;
+async function performMillTravel(pig, targetTile) {
+    if (!threadMillModel || !decorativeCubeModel) return;
+    pig.userData.moving = true;
 
-    // --- Start shooting thread immediately in parallel ---
-    shootAtCubes(Char);
-
-    // Calculate treadmill bounds to get exact waypoints
-    const threadBox = new THREE.Box3().setFromObject(threadMillModel);
-    const threadBounds = {
-        minX: threadBox.min.x,
-        maxX: threadBox.max.x,
-        minZ: threadBox.min.z,
-        maxZ: threadBox.max.z,
-        centerX: (threadBox.min.x + threadBox.max.x) / 2,
-        centerZ: (threadBox.min.z + threadBox.max.z) / 2,
-        width: threadBox.max.x - threadBox.min.x,
-        depth: threadBox.max.z - threadBox.min.z
-    };
-
-    const h = window.game_object.GameProperties.SpawnHeight;
-
-    // EXACT WAYPOINTS based on treadmill bounding box
-    const pEntryStub    = new THREE.Vector3(threadBounds.minX +2, h, threadBounds.maxZ - 0.5);
-    const pFrontRight   = new THREE.Vector3(threadBounds.maxX - 1, h, threadBounds.maxZ - 0.5);
-    const pBackRight    = new THREE.Vector3(threadBounds.maxX - 0.5, h, threadBounds.minZ + 1);
-    const pBackLeft     = new THREE.Vector3(threadBounds.minX +1, h, threadBounds.minZ + 0.5);
-    const pExitTip      = new THREE.Vector3(threadBounds.minX + 0.3, h, threadBounds.maxZ -  2.5);
-    const pFinalTile    = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
-
-    // --- PHASE 1: JUMP IN ---
-    Char.rotation.y = Math.PI / 2; 
-    await jumpToPoint(Char, pEntryStub, 700);
-    if (!Char.parent) return;
-
-    // --- PHASE 2: TRAVEL RIGHT ---
-    Char.rotation.y = Math.PI / 2; 
-    await moveAlongPoint(Char, pFrontRight, 600);
-    if (!Char.parent) return;
-
-    // --- PHASE 3: TRAVEL UP RIGHT SIDE ---
-    Char.rotation.y = Math.PI; 
-    await moveAlongPoint(Char, pBackRight, 600);
-    if (!Char.parent) return;
-
-    // --- PHASE 4: TRAVEL LEFT ACROSS TOP ---
-    Char.rotation.y = -Math.PI / 2; 
-    await moveAlongPoint(Char, pBackLeft, 800);
-    if (!Char.parent) return;
-
-    // --- PHASE 5: EXIT TO FRONT ---
-    Char.rotation.y = 0;
-    await moveAlongPoint(Char, pExitTip, 500);
-    if (!Char.parent) return;
-
-    // --- PHASE 6: FINAL JUMP FROM EXIT TO TILE ---
-    Char.rotation.y = Math.PI / 2; 
-    await jumpToPoint(Char, pFinalTile, 700);
-    if (!Char.parent) return;
-
-    Char.userData.onTile = true;
-    Char.userData.moving = false;
+    const mX = 0, mZ = -3, h = 0.85;
     
-    // Update tile appearance to match character color
-    const tileIdx = Char.userData.currentTileIndex;
-    if (tileIdx !== undefined) {
-        updateTileAppearance(tileIdx, Char.userData.colorName);
+    // THE 6-PHASE WAYPOINTS
+    const p1 = new THREE.Vector3(mX-2, h, mZ+4);      // Entry
+    const p2 = new THREE.Vector3(mX+2.8, h, mZ+4);    // Corner FR
+    const p3 = new THREE.Vector3(mX+3.4, h, mZ-2.8);  // Corner BR
+    const p4 = new THREE.Vector3(mX-3.4, h, mZ-2.8);  // Corner BL
+    const p5 = new THREE.Vector3(mX-3.4, h, mZ+2.8);  // Blue Arrow End
+    const pFinal = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
+
+    // --- STEP A: CHARACTER STARTS DEPLOYMENT ---
+    const deployment = jumpToPoint(pig, p1, 750); 
+
+    // --- STEP B: TRANSPORT SQUARE ARRIVAL ---
+    // Spawn the Square "elevator" just before character lands at Entry
+    const activeCarrier = decorativeCubeModel.clone();
+    activeCarrier.scale.set(0.12, 0.04, 0.12); // Flatter "Platform" scale
+    activeCarrier.position.set(p1.x, -1, p1.z); // Start below floor
+    scene.add(activeCarrier);
+
+    // Animate Square popping up to meet the character
+    await jumpToPoint(activeCarrier, new THREE.Vector3(p1.x, h - 0.1, p1.z), 400);
+
+    // Sync point: Character lands on Square
+    await deployment; 
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    // Start Shooting
+    shootAtCubes(pig);
+
+    // --- STEP C: SHARED CARRIER JOURNEY ---
+    // From this point on, the pig is on top of the carrier
+    async function moveTogether(target, dur, rotY) {
+        pig.rotation.y = rotY;
+        const move1 = moveAlongPoint(pig, target, dur);
+        const move2 = moveAlongPoint(activeCarrier, new THREE.Vector3(target.x, h - 0.1, target.z), dur);
+        await Promise.all([move1, move2]);
     }
+
+    await moveTogether(p2, 600, Math.PI / 2);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p3, 600, Math.PI);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p4, 800, -Math.PI / 2);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p5, 500, 0); // Down toward Blue Arrow End
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    // --- STEP D: SQUARE DISAPPEARANCE ---
+    // Before character takes final leap, Square "descends" and is deleted
+    const disappear = jumpToPoint(activeCarrier, new THREE.Vector3(p5.x, -2, p5.z), 300);
+    
+    // --- STEP E: FINAL CHARACTER LANDING ---
+    pig.rotation.y = Math.PI / 2;
+    await jumpToPoint(pig, pFinal, 700);
+
+    // Clean up
+    await disappear;
+    scene.remove(activeCarrier); 
+
+    pig.userData.moving = false;
+    pig.userData.onTile = true;
+    updateTileAppearance(pig.userData.currentTileIndex, pig.userData.colorName);
 }
    function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
@@ -1257,6 +1462,7 @@ async function performMillTravel(Char, targetTile) {
     if (tIdx !== -1) {
         tileOccupancy[tIdx] = Char;
         Char.userData.currentTileIndex = tIdx;
+        activateSquareAtEntry(Char); // Trigger square animation when character deploys
         performMillTravel(Char, tiles[tIdx]);
     }
 }
