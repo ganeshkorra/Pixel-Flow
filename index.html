@@ -96,8 +96,7 @@ window.game_object = {
 
     GameProperties: { 
         GridSize: { count: 3}, 
-        ShootInterval: { amount: 0 }, 
-        AmmoLevels: { low: 0, high: 0 },
+      
         SpawnHeight: 0.85,
         CubeSize: { width: 3, height:  7, depth: 3 },
         LevelSize: { rows: 20, cols: 20 }
@@ -280,7 +279,7 @@ camera.lookAt(0, 0, 0);
         const occupancy = Array.from({length: GRID}, () => Array(GRID).fill(null));
         let tiles = [];
         let tileOccupancy = [];
-        let spacingGlobal = 1.2;
+        let spacingGlobal = 1.2; // Default spacing, will be updated by loader
         const pickable = [];
         const activeAnims = [];
         const cubesToSmash = [];
@@ -392,6 +391,7 @@ function updateCharLabel(Char) {
                     color: 0x6366f1,
                     metalness: 0.6,
                     roughness: 0.3,
+                    visible : false,
                     emissive: 0x4f46e5,
                     emissiveIntensity: 0.5
                 });
@@ -403,7 +403,7 @@ function updateCharLabel(Char) {
                 tileGroup.add(rimMesh);
                 
                 // Light indicator sphere (glowing center)
-                const indicatorGeom = new THREE.SphereGeometry(tileSize * 0.15, 16, 16);
+                const indicatorGeom = new THREE.SphereGeometry(tileSize * 0, 16, 16);
                 const indicatorMat = new THREE.MeshStandardMaterial({ 
                     color: 0x3b82f6,
                     emissive: 0x60a5fa,
@@ -782,7 +782,7 @@ function updateCharLabel(Char) {
                 const cubeModel = gltf.scene;
                 const rows = autoPattern.length;
                 const cols = autoPattern[0].length;
-                const cubeSpacing = 0.24;
+                const cubeSpacing = 0.26;
 
                 for (let r = 0; r < rows; r++) {
                     for (let c = 0; c < cols; c++) {
@@ -792,8 +792,8 @@ function updateCharLabel(Char) {
                         const clone = cubeModel.clone();
                         const cubeSize = window.game_object.GameProperties.CubeSize;
                         clone.scale.set(cubeSize.width, cubeSize.height, cubeSize.depth);
-                        clone.position.set((c - cols/2) * cubeSpacing, 0.5, (r - rows/2) * cubeSpacing - 2.5);
-
+                       clone.position.set(
+  (c - (cols - 1) / 2) * cubeSpacing,   -0.6,(r - (rows - 1) / 2) * cubeSpacing - 2.7  );
                         clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
 
                         // Color the cube automatically based on image pixel
@@ -1004,9 +1004,9 @@ function playCubePopAnimation(cube, cubeColor) {
                 // 0% -> 40% time: Cube gets thinner on X/Z, stretches tall on Y
                 const squeeze = Math.sin((t / 0.4) * Math.PI);
                 cube.scale.set(
-                    originalScaleX * (1 - squeeze * 0.4), // Compress width
-                    originalScaleY * (1 + squeeze * 0.6), // Stretch height (The Pop-up)
-                    originalScaleZ * (1 - squeeze * 0.4)  // Compress depth
+                    originalScaleX * (2 - squeeze * 0.4), // Compress width
+                    originalScaleY * (5 + squeeze * 0.6), // Stretch height (The Pop-up)
+                    originalScaleZ * (2 - squeeze * 0.4)  // Compress depth
                 );
             } else {
                 // STAGE 2: THE BLAST (Rapid expansion before shatter)
@@ -1038,123 +1038,33 @@ function playCubePopAnimation(cube, cubeColor) {
     });
 }
 
-// SQUARE POP, FLIP AND MOVE ANIMATION: When character is clicked, activate entry square
 function activateSquareAtEntry(character) {
-    if (squareClones.length === 0) return;
+    if (squareClones.length === 0 || !characterPathRail) return;
     
     const square = squareClones[nextSquareIndex % squareClones.length];
     nextSquareIndex++;
-    
-    // Store reference to active square on character so it can be removed later
-    if (character) {
-        character.userData.activeSquare = square;
-    }
-    
-    const mX = 0, mZ = -3.5, h = 1;
-    
-    const p1 = new THREE.Vector3(mX-2, h, mZ+4);      // Entry
-    const p2 = new THREE.Vector3(mX+2.8, h, mZ+4);    // Corner FR
-    const p3 = new THREE.Vector3(mX+3.4, h, mZ-2.8);  // Corner BR
-    const p4 = new THREE.Vector3(mX-3.4, h, mZ-2.8);  // Corner BL
-    const p5 = new THREE.Vector3(mX-4.4, h, mZ+2.8);  // Exit
+    if (character) character.userData.activeSquare = square;
     
     const startPos = square.position.clone();
-    const startQuat = square.quaternion.clone();
-    
-    // Calculate final flat rotation (backward flip around Z-axis: -90 degrees)
-    const backwardFlip = new THREE.Quaternion();
-    backwardFlip.setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
-    const flatQuat = new THREE.Quaternion().multiplyQuaternions(backwardFlip, startQuat);
-    
-    // PHASE 1: Flip backward 90° + Move to entry (600ms)
+    const railStart = characterPathRail.getPointAt(0);
+
     addAnim({
-        elapsed: 0, duration: 600,
+        elapsed: 0, duration: 190,
         update(dt) {
             this.elapsed += dt;
             const t = Math.min(this.elapsed / this.duration, 1);
+            square.position.lerpVectors(startPos, railStart, t);
             
-            // Move from slot to entry
-            square.position.lerpVectors(startPos, p1, t);
+            // The Backward Flip
+            const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -t * Math.PI / 2);
+            square.quaternion.copy(flip);
             
-            // Smoothly rotate backward to flat
-            const flipAmount = -t * Math.PI / 2;
-            const flipQuat = new THREE.Quaternion();
-            flipQuat.setFromAxisAngle(new THREE.Vector3(0, 0, 1), flipAmount);
-            square.quaternion.multiplyQuaternions(flipQuat, startQuat);
-            
-            if (t >= 1) {
-                square.quaternion.copy(flatQuat);
-                return true;
-            }
+            if (t >= 1) return true;
             return false;
         }
     });
-    
-    // PHASE 2: P1 -> P2 (600ms) - Stay flat under character
-    setTimeout(() => {
-        addAnim({
-            elapsed: 0, duration: 600,
-            update(dt) {
-                this.elapsed += dt;
-                const t = Math.min(this.elapsed / this.duration, 1);
-                square.position.lerpVectors(p1, p2, t);
-                square.quaternion.copy(flatQuat);
-                if (t >= 1) return true;
-                return false;
-            }
-        });
-    }, 600);
-    
-    // PHASE 3: P2 -> P3 (600ms)
-    setTimeout(() => {
-        addAnim({
-            elapsed: 0, duration: 900,
-            update(dt) {
-                this.elapsed += dt;
-                const t = Math.min(this.elapsed / this.duration, 1);
-                square.position.lerpVectors(p2, p3, t);
-                square.quaternion.copy(flatQuat);
-                if (t >= 1) return true;
-                return false;
-            }
-        });
-    }, 1200);
-    
-    // PHASE 4: P3 -> P4 (800ms)
-    setTimeout(() => {
-        addAnim({
-            elapsed: 0, duration: 800,
-            update(dt) {
-                this.elapsed += dt;
-                const t = Math.min(this.elapsed / this.duration, 1);
-                square.position.lerpVectors(p3, p4, t);
-                square.quaternion.copy(flatQuat);
-                if (t >= 1) return true;
-                return false;
-            }
-        });
-    }, 1800);
-    
-    // PHASE 5: P4 -> P5 (500ms) - Final exit, then reset back to slot
-    setTimeout(() => {
-        addAnim({
-            elapsed: 0, duration: 500,
-            update(dt) {
-                this.elapsed += dt;
-                const t = Math.min(this.elapsed / this.duration, 1);
-                square.position.lerpVectors(p4, p5, t);
-                square.quaternion.copy(flatQuat);
-                if (t >= 1) {
-                    // Reset square back to original slot position
-                    square.position.copy(square.userData.originalPos);
-                    square.quaternion.copy(startQuat);
-                    return true;
-                }
-                return false;
-            }
-        });
-    }, 2600);
 }
+
 
 // 2. Impact Shard Effect (At the Cube)
 function createImpactEffect(pos, color) {
@@ -1369,7 +1279,8 @@ function createFakeBeltMesh() {
         metalness: 0.2,
         roughness: 0.8,
         transparent: true,
-        opacity: 1.0
+        opacity: 0,
+        
     });
 
     const beltMesh = new THREE.Mesh(beltGeom, beltMaterial);
@@ -1379,12 +1290,14 @@ function createFakeBeltMesh() {
     const pathPoints = characterPathRail.getPoints(150); // 150 points along the curve
     const lineGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
     const lineMaterial = new THREE.LineBasicMaterial({
-        color: 0x000000, // Pure black
-        linewidth: 4,
-        transparent: false
+        color: 0x434476, // Pure black
+        linewidth: 0,
+        transparent: true,
+        opacity: 0,
+        
     });
     const pathLine = new THREE.Line(lineGeometry, lineMaterial);
-    pathLine.position.y = 0.02; // Slightly above the belt surface
+    pathLine.position.y = -10; // Slightly above the belt surface
     scene.add(pathLine);
 }
 
@@ -1392,58 +1305,64 @@ async function performMillTravel(pig, targetTile) {
     if (!characterPathRail) return;
     
     pig.userData.moving = true;
+    const square = pig.userData.activeSquare;
+    const h = 0.81; // Surface height
 
-    // Carrier Tray setup (Flip 90° flat logic preserved)
-    const slider = decorativeCubeModel.clone();
-    slider.scale.set(0.12, 0.12, 0.12);
-    scene.add(slider);
+    // Lock for "Flat Only" rotation
+    const flatFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
 
-    // THE PRODUCTION LOOP
     await new Promise(resolve => {
-        let progress = 0; // The character's percentage on the rail (0% to 100%)
-        shootAtCubes(pig); // Activate mouth combat in parallel
+        let progress = 0;
+        shootAtCubes(pig); 
 
         addAnim({
-            duration: 3800, // Travel Speed
+            duration: 3800, 
             update(dt) {
                 progress += dt / this.duration;
                 const t = Math.min(progress, 1);
 
-                // --- PRECISION ALIGNMENT ---
-                // We extract the 3D position exactly from your drawn black line
+                // 1. Get current path points
                 const railPos = characterPathRail.getPointAt(t);
-                const aheadPos = characterPathRail.getPointAt(Math.min(t + 0.02, 1));
+                const aheadPos = characterPathRail.getPointAt(Math.min(t + 0.01, 1));
+
+                // 2. CALCULATE "SLIGHT LEFT" OFFSET
+                // We find the direction the belt is moving, then find the vector pointing left
+                const direction = new THREE.Vector3().subVectors(aheadPos, railPos).normalize();
+                const sideVector = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize();
                 
-            +       // Place slider EXACTLY on the rail centerline
-                slider.position.copy(railPos);
-                slider.position.y = railPos.y + 0.05; // Sit just above the line
-       
-                // Place character PERFECTLY CENTERED above slider (0.35 units up)
-                pig.position.copy(railPos);
-                pig.position.y = railPos.y + 0.35; // Perfectly centered height
-                
-                // THE ROTATION FLIP LOGIC (Keep it flat)
-                slider.rotation.x = Math.PI / 2; // Lie flat on track
-                
-                   // AUTOMATIC STEERING: Look ahead to steer precisely
-                   const directionAhead = new THREE.Vector3().subVectors(aheadPos, railPos).normalize();
-                   pig.lookAt(
-                       pig.position.x + directionAhead.x,
-                       pig.position.y,
-                       pig.position.z + directionAhead.z
-                   );
+                // OFFSET AMOUNT: Change -0.12 to nudge more or less to the left
+                const leftShift = sideVector.multiplyScalar(-0.35);
+
+                // 3. POSITION SQUARE (With Left Shift)
+                if (square) {
+                    square.position.copy(railPos).add(leftShift);
+                    square.position.y = h; 
+
+                    // Keep rotation flat only
+                    square.lookAt(aheadPos.x, h, aheadPos.z);
+                    square.quaternion.multiply(flatFlip); 
+                }
+
+                // 4. POSITION PIG (Exactly on the Rail center)
+                pig.position.set(railPos.x, h + 0.35, railPos.z);
+                pig.lookAt(aheadPos.x, h + 0.35, aheadPos.z);
 
                 if (t >= 1) return true;
                 return false;
             },
-            finish: () => {
-                scene.remove(slider); // Remove base before character jumps off
-                resolve();
-            }
+            finish: resolve
         });
     });
 
-    // LEAP TO FINISH TILE (Matches previous logic)
+    // EXIT LOGIC
+    if (square) {
+        const exitPos = new THREE.Vector3(-4.5, h, 2.5);
+        tweenPosition(square, square.position.clone(), exitPos, 500).then(() => {
+            square.position.copy(square.userData.originalPos);
+            square.quaternion.set(0, 0, 0, 1);
+        });
+    }
+
     const pFinal = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
     pig.rotation.y = Math.PI / 2; 
     await jumpToPoint(pig, pFinal, 700);
@@ -1452,6 +1371,7 @@ async function performMillTravel(pig, targetTile) {
     pig.userData.moving = false;
     updateTileAppearance(pig.userData.currentTileIndex, pig.userData.colorName);
 }
+
   function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
