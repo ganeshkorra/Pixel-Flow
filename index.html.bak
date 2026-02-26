@@ -58,7 +58,7 @@
     <script type="module">
         import * as THREE from 'three';
         import { GLTFLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/GLTFLoader.js';
-        // import { FBXLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/FBXLoader.js';
+        import { FBXLoader } from 'https://unpkg.com/three@0.153.0/examples/jsm/loaders/FBXLoader.js';
         import { OrbitControls } from 'https://unpkg.com/three@0.153.0/examples/jsm/controls/OrbitControls.js';
 
 
@@ -292,7 +292,6 @@ camera.lookAt(0, 0, 0);
         let totalTime = 0; // Game time for idle animations
         const squareClones = []; // Store square references for animation
         let nextSquareIndex = 0; // Track which square to activate next
-        let characterPathRail = null; // The mathematical "True North" for movement
 
 function createCharLabelTexture(text) {
     const canvas = document.createElement('canvas');
@@ -742,9 +741,6 @@ function updateCharLabel(Char) {
                 
                 scene.add(beltPlane);
                 console.log('Plane added to scene at position:', beltPlane.position);
-                
-                // Create the high-precision spline rail system
-                createFakeBeltMesh();
             }, function(progress) {
                 console.log('Plane loading progress:', (progress.loaded / progress.total * 100) + '%');
             }, function(err) { 
@@ -1326,133 +1322,78 @@ function jumpToPoint(obj, target, duration) {
     });
 }
 
-function buildIndustrialPath() {
-    // These 7 points define the EXACT path drawn in your screenshot
-    // PERFECTLY CENTERED in the middle of the treadmill belt
-    const h = 0.81; // The surface height of the treadmill belt
-    characterPathRail = new THREE.CatmullRomCurve3([
-        new THREE.Vector3(-2.0, h, 0.7),    // START: Entry (centered bottom)
-        new THREE.Vector3(2, h, 0.7),       // Mid-entry point for smooth start
-        new THREE.Vector3(3.0, h, 0.51),     // Front-Right corner (centered)
-        new THREE.Vector3(3.0, h, -6.0),    // Back-Right corner (centered)
-        new THREE.Vector3(0, h, -6.5),      // Mid-back point
-        new THREE.Vector3(-3.0, h, -6.0),   // Back-Left corner (centered)
-        new THREE.Vector3(-3.5, h, -0.5)     // EXIT: Blue Arrow end (centered)
-    ]);
-
-    // This makes the corners round and natural, exactly like the metal track
-    characterPathRail.curveType = 'centripetal';
-}
-
-function createFakeBeltMesh() {
-    buildIndustrialPath(); // Generate math rail first
-
-    // A. Shape of the belt cross-section (A flat industrial strip)
-    const beltShape = new THREE.Shape();
-    beltShape.moveTo(-0.6, 0);
-    beltShape.lineTo(0.6, 0);
-    beltShape.lineTo(0.6, 0.1);
-    beltShape.lineTo(-0.6, 0.1);
-    beltShape.lineTo(-0.6, 0);
-
-    const extrudeSettings = {
-        steps: 120, // High detail for smooth curves
-        extrudePath: characterPathRail, // FLAWLESS ALIGNMENT with your line
-        bevelEnabled: false
-    };
-
-    const beltGeom = new THREE.ExtrudeGeometry(beltShape, extrudeSettings);
-    
-    // B. Industrial Dark Blue Material (with arrows)
-    const beltMaterial = new THREE.MeshStandardMaterial({
-        color: 0x434476,
-        metalness: 0.2,
-        roughness: 0.8,
-        transparent: true,
-        opacity: 1.0
-    });
-
-    const beltMesh = new THREE.Mesh(beltGeom, beltMaterial);
-    scene.add(beltMesh);
-    
-    // C. ADD VISUAL DARK LINE (Path visualization)
-    const pathPoints = characterPathRail.getPoints(150); // 150 points along the curve
-    const lineGeometry = new THREE.BufferGeometry().setFromPoints(pathPoints);
-    const lineMaterial = new THREE.LineBasicMaterial({
-        color: 0x000000, // Pure black
-        linewidth: 4,
-        transparent: false
-    });
-    const pathLine = new THREE.Line(lineGeometry, lineMaterial);
-    pathLine.position.y = 0.02; // Slightly above the belt surface
-    scene.add(pathLine);
-}
-
 async function performMillTravel(pig, targetTile) {
-    if (!characterPathRail) return;
-    
+    if (!threadMillModel || !decorativeCubeModel) return;
     pig.userData.moving = true;
 
-    // Carrier Tray setup (Flip 90° flat logic preserved)
-    const slider = decorativeCubeModel.clone();
-    slider.scale.set(0.12, 0.12, 0.12);
-    scene.add(slider);
-
-    // THE PRODUCTION LOOP
-    await new Promise(resolve => {
-        let progress = 0; // The character's percentage on the rail (0% to 100%)
-        shootAtCubes(pig); // Activate mouth combat in parallel
-
-        addAnim({
-            duration: 3800, // Travel Speed
-            update(dt) {
-                progress += dt / this.duration;
-                const t = Math.min(progress, 1);
-
-                // --- PRECISION ALIGNMENT ---
-                // We extract the 3D position exactly from your drawn black line
-                const railPos = characterPathRail.getPointAt(t);
-                const aheadPos = characterPathRail.getPointAt(Math.min(t + 0.02, 1));
-                
-            +       // Place slider EXACTLY on the rail centerline
-                slider.position.copy(railPos);
-                slider.position.y = railPos.y + 0.05; // Sit just above the line
-       
-                // Place character PERFECTLY CENTERED above slider (0.35 units up)
-                pig.position.copy(railPos);
-                pig.position.y = railPos.y + 0.35; // Perfectly centered height
-                
-                // THE ROTATION FLIP LOGIC (Keep it flat)
-                slider.rotation.x = Math.PI / 2; // Lie flat on track
-                
-                   // AUTOMATIC STEERING: Look ahead to steer precisely
-                   const directionAhead = new THREE.Vector3().subVectors(aheadPos, railPos).normalize();
-                   pig.lookAt(
-                       pig.position.x + directionAhead.x,
-                       pig.position.y,
-                       pig.position.z + directionAhead.z
-                   );
-
-                if (t >= 1) return true;
-                return false;
-            },
-            finish: () => {
-                scene.remove(slider); // Remove base before character jumps off
-                resolve();
-            }
-        });
-    });
-
-    // LEAP TO FINISH TILE (Matches previous logic)
+    const mX = 0, mZ = -3, h = 0.85;
+    
+    // THE 6-PHASE WAYPOINTS
+    const p1 = new THREE.Vector3(mX-2, h, mZ+4);      // Entry
+    const p2 = new THREE.Vector3(mX+2.8, h, mZ+4);    // Corner FR
+    const p3 = new THREE.Vector3(mX+3.4, h, mZ-2.8);  // Corner BR
+    const p4 = new THREE.Vector3(mX-3.4, h, mZ-2.8);  // Corner BL
+    const p5 = new THREE.Vector3(mX-3.4, h, mZ+2.8);  // Blue Arrow End
     const pFinal = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
-    pig.rotation.y = Math.PI / 2; 
+
+    // --- STEP A: CHARACTER STARTS DEPLOYMENT ---
+    const deployment = jumpToPoint(pig, p1, 750); 
+
+    // --- STEP B: TRANSPORT SQUARE ARRIVAL ---
+    // Spawn the Square "elevator" just before character lands at Entry
+    const activeCarrier = decorativeCubeModel.clone();
+    activeCarrier.scale.set(0.12, 0.04, 0.12); // Flatter "Platform" scale
+    activeCarrier.position.set(p1.x, -1, p1.z); // Start below floor
+    scene.add(activeCarrier);
+
+    // Animate Square popping up to meet the character
+    await jumpToPoint(activeCarrier, new THREE.Vector3(p1.x, h - 0.1, p1.z), 400);
+
+    // Sync point: Character lands on Square
+    await deployment; 
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    // Start Shooting
+    shootAtCubes(pig);
+
+    // --- STEP C: SHARED CARRIER JOURNEY ---
+    // From this point on, the pig is on top of the carrier
+    async function moveTogether(target, dur, rotY) {
+        pig.rotation.y = rotY;
+        const move1 = moveAlongPoint(pig, target, dur);
+        const move2 = moveAlongPoint(activeCarrier, new THREE.Vector3(target.x, h - 0.1, target.z), dur);
+        await Promise.all([move1, move2]);
+    }
+
+    await moveTogether(p2, 600, Math.PI / 2);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p3, 600, Math.PI);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p4, 800, -Math.PI / 2);
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    await moveTogether(p5, 500, 0); // Down toward Blue Arrow End
+    if(!pig.parent) { scene.remove(activeCarrier); return; }
+
+    // --- STEP D: SQUARE DISAPPEARANCE ---
+    // Before character takes final leap, Square "descends" and is deleted
+    const disappear = jumpToPoint(activeCarrier, new THREE.Vector3(p5.x, -2, p5.z), 300);
+    
+    // --- STEP E: FINAL CHARACTER LANDING ---
+    pig.rotation.y = Math.PI / 2;
     await jumpToPoint(pig, pFinal, 700);
 
-    pig.userData.onTile = true;
+    // Clean up
+    await disappear;
+    scene.remove(activeCarrier); 
+
     pig.userData.moving = false;
+    pig.userData.onTile = true;
     updateTileAppearance(pig.userData.currentTileIndex, pig.userData.colorName);
 }
-  function onPointerDown(event) {
+   function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1521,13 +1462,8 @@ async function performMillTravel(pig, targetTile) {
     if (tIdx !== -1) {
         tileOccupancy[tIdx] = Char;
         Char.userData.currentTileIndex = tIdx;
-        
-        // JUMP TO ENTRY POINT FIRST, then travel the mill
-        const entryPoint = new THREE.Vector3(-2.0, 0.85, 0.7); // Entry of the treadmill path
-        jumpToPoint(Char, entryPoint, 600).then(() => {
-            activateSquareAtEntry(Char); // Trigger square animation when character deploys
-            performMillTravel(Char, tiles[tIdx]);
-        });
+        activateSquareAtEntry(Char); // Trigger square animation when character deploys
+        performMillTravel(Char, tiles[tIdx]);
     }
 }
 
@@ -1571,7 +1507,6 @@ function createStartingCharacter(row, col, color, ammo) {
     occupancy[row][col] = clone;
     Chars.push(clone);
 }
-
 
 function spawnNewChar(row, col) {
     if (!baseCharModel || activeLevelColors.length === 0) return;
