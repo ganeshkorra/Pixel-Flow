@@ -11,6 +11,7 @@
         .color-btn { width: 40px; height: 40px; border-radius: 6px; border: 2px solid rgba(0,0,0,0.2); cursor: pointer; }
         .color-btn:focus { outline: 2px solid #fff; }
         #hint { position: absolute; left: 10px; top: 10px; background: rgba(0,0,0,0.4); color: #fff; padding: 6px 10px; border-radius: 6px; font-size: 13px; }
+        /* #heading { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); color: #fff; font-size: 24px; font-weight: bold; text-align: center; text-shadow: 2px 2px 4px rgba(0,0,0,0.6); z-index: 10; } */
         
         /* Mobile Responsiveness */
         @media (max-width: 768px) {
@@ -51,7 +52,9 @@
     </script>
 </head>
 <body>
+    <!-- <div id="heading">chikiri rairairara aayashare natural-star-nani</div> -->
     <div id="canvas-container">
+
         <!-- <div id="hint">Click a Char to move</div> -->
     </div>
 
@@ -158,8 +161,8 @@ window.game_object = {
     const aspect = container.clientWidth / container.clientHeight;
 const size = 8;
 const camera = new THREE.OrthographicCamera(-size * aspect, size * aspect, size, -size, 0.1, 1000);
-camera.position.set(0, 20, 0);
-camera.lookAt(0, 0, 0);
+camera.position.set(0, 50, 0);
+camera.lookAt(0, 0.5, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
