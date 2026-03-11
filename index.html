@@ -76,6 +76,7 @@ window.game_object = {
     GameElements: {
     CharModel: { name: "Character Model", data: "pig.glb" },
     ObstacleModel: { name: "Cube Unit", data: "Cube.glb" },
+    LevelImage: { name: "Level Layout Image", data: "Screenshot 2026-02-18 132325.png" },
         // Matrix for the Moon/Character Pixel Art
         CharacterPattern: [
             [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
@@ -102,7 +103,7 @@ window.game_object = {
       
         SpawnHeight: 0.85,
         CubeSize: { width: 3, height:  7, depth: 3 },
-        LevelSize: { rows: 20, cols: 20 }
+        LevelSize: { rows: 18, cols: 18 }
     },
 
     GameThemes: {
@@ -134,6 +135,7 @@ window.game_object = {
         
 
     Cta: {
+        
         playStoreLink: "https://play.google.com/store/apps/details?id=com.loomgames.pixelflow&hl=en_IN",
         appleStoreLink: "https://apps.apple.com/us/app/pixel-flow/id6751056652"
     }
@@ -160,10 +162,11 @@ window.game_object = {
 
     const aspect = container.clientWidth / container.clientHeight;
 const size = 8;
+// Before: camera.position.set(0, 50, 0); 
+// After: Moving Z back slightly (to 5) gives it that "tilted toward camera" look
 const camera = new THREE.OrthographicCamera(-size * aspect, size * aspect, size, -size, 0.1, 1000);
-camera.position.set(0, 50, 0);
-camera.lookAt(0, 0.5, 0);
-
+camera.position.set(0, 15, 6); // Move back on Z and lower on Y
+camera.lookAt(0, -2, -3);     // Look slightly ahead into the scene
         const renderer = new THREE.WebGLRenderer({ antialias: true });
         renderer.setSize(container.clientWidth, container.clientHeight);
         renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -630,7 +633,10 @@ function updateCharLabel(Char) {
             squarePositions.forEach((pos, idx) => {
                 const squareClone = squareModel.clone(true);
                 squareClone.position.set(pos.x, pos.y, pos.z);
-                squareClone.userData = { originalPos: new THREE.Vector3(pos.x, pos.y, pos.z) }; // Store original position
+                squareClone.userData = { 
+                    originalPos: new THREE.Vector3(pos.x, pos.y, pos.z),
+                    originalScale: squareScale // Store original scale
+                }; // Store original position and scale
                 
                 // Check if model has meshes
                 let hasMesh = false;
@@ -761,12 +767,10 @@ function updateCharLabel(Char) {
 
         // Load Cube.glb and create grouped cube arrangement
         // NEW AUTOMATIC LOADER
-        const imgLevelUrl = "Screenshot 2026-02-18 132325.png"; // UPLOAD YOUR IMAGE HERE
-
         const LEVEL_ROWS = window.game_object.GameProperties.LevelSize.rows;
         const LEVEL_COLS = window.game_object.GameProperties.LevelSize.cols;
 
-        parseImageToLevel(imgLevelUrl, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
+        parseImageToLevel(window.game_object.GameElements.LevelImage.data, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
             // 1. COUNT EVERY CUBE PER COLOR (The Census)
             const colorCensus = {};
             autoPattern.forEach(row => {
@@ -781,35 +785,52 @@ function updateCharLabel(Char) {
             console.log('Active Mission Colors (from level pattern):', activeLevelColors, 'Census:', colorCensus);
 
             // 2. Load Cubes and place them
-            loader.load(window.game_object.GameElements.ObstacleModel.data, (gltf) => {
-                const cubeModel = gltf.scene;
-                const rows = autoPattern.length;
-                const cols = autoPattern[0].length;
-                const cubeSpacing = 0.26;
+         loader.load(window.game_object.GameElements.ObstacleModel.data, (gltf) => {
+    const cubeModel = gltf.scene;
+    const rows = autoPattern.length;
+    const cols = autoPattern[0].length;
+    
+    // spacing needs to be tight so they look like one solid plate
+    const cubeSpacing = 0.27; 
+    const wallHeight = 13; // Target Y-height
 
-                for (let r = 0; r < rows; r++) {
-                    for (let c = 0; c < cols; c++) {
-                        const colorCode = autoPattern[r][c];
-                        const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
+    for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+            const colorCode = autoPattern[r][c];
+            const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
 
-                        const clone = cubeModel.clone();
-                        const cubeSize = window.game_object.GameProperties.CubeSize;
-                        clone.scale.set(cubeSize.width, cubeSize.height, cubeSize.depth);
-                       clone.position.set(
-  (c - (cols - 1) / 2) * cubeSpacing,   -0.6,(r - (rows - 1) / 2) * cubeSpacing - 2.7  );
-                        clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
+            const clone = cubeModel.clone();
+            
+            // SET SCALE: High Y-value for that "Pillar" look from reference
+            // Adjust X and Z scale to 2.8 - 3.0 to remove gaps between columns
+            clone.scale.set(3.1, wallHeight, 3.1); 
 
-                        // Color the cube automatically based on image pixel
-                        clone.traverse(n => {
-                            if (n.isMesh) {
-                                n.material = n.material.clone();
-                                n.material.color.set(colorHex);
-                            }
-                        });
-                        scene.add(clone);
-                        cubesToSmash.push(clone);
-                    }
+            // POSITION:
+            // X and Z are centered.
+            // Y is set to (wallHeight/2 - offset) so the bottom is at the ground level
+            const posX = (c - (cols - 1) / 2) * cubeSpacing;
+            const posZ = (r - (rows - 1) / 2) * cubeSpacing;
+            
+            // Base at ground: we offset the pivot by moving Y half its height
+            // We set Y to ~0.5 relative to ground, and Z is -2.7 to stay in tread area
+            clone.position.set(posX, (wallHeight * 0.1) - 1.5, posZ - 2.7);
+
+            clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
+
+            // Apply Shiny Plastic Material (like the reference)
+            clone.traverse(n => {
+                if (n.isMesh) {
+                    n.material = new THREE.MeshStandardMaterial({
+                        color: colorHex,
+                        roughness: 0.1, // Shiny surface
+                        metalness: 0.2
+                    });
                 }
+            });
+            scene.add(clone);
+            cubesToSmash.push(clone);
+        }
+    }
                 updateObstacleStatus();
 
                 // 3. DEFINE THE FINITE 9 CHARACTERS WITH MATHEMATICAL AMMO
@@ -994,7 +1015,7 @@ function playCubePopAnimation(cube, cubeColor) {
     const originalScaleX = cubeSize.width;
     const originalScaleY = cubeSize.height;
     const originalScaleZ = cubeSize.depth;
-    const popDuration = 240;
+    const popDuration = 1000;
 
     addAnim({
         elapsed: 0, duration: popDuration,
@@ -1008,9 +1029,10 @@ function playCubePopAnimation(cube, cubeColor) {
                 const squeeze = Math.sin((t / 0.4) * Math.PI);
                 cube.scale.set(
                     originalScaleX * (2 - squeeze * 0.4), // Compress width
-                    originalScaleY * (5 + squeeze * 0.6), // Stretch height (The Pop-up)
+                    originalScaleY * (1 + squeeze * 0.2), // Stretch height (The Pop-up)
                     originalScaleZ * (2 - squeeze * 0.4)  // Compress depth
                 );
+                
             } else {
                 // STAGE 2: THE BLAST (Rapid expansion before shatter)
                 // 40% -> 100% time: Expands outward rapidly, fades to transparent
@@ -1050,6 +1072,9 @@ function activateSquareAtEntry(character) {
     
     const startPos = square.position.clone();
     const railStart = characterPathRail.getPointAt(0);
+    
+    // Scale down to 0.45 when traveling
+    square.scale.setScalar(0.2);
 
     addAnim({
         elapsed: 0, duration: 190,
@@ -1363,6 +1388,8 @@ async function performMillTravel(pig, targetTile) {
         tweenPosition(square, square.position.clone(), exitPos, 500).then(() => {
             square.position.copy(square.userData.originalPos);
             square.quaternion.set(0, 0, 0, 1);
+            // Restore to normal size
+            square.scale.setScalar(square.userData.originalScale);
         });
     }
 
