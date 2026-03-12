@@ -42,6 +42,40 @@
         /* Prevent text selection on long touches */
         * { user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
         canvas { display: block; }
+/* CTA Endscreen Styles */
+#cta-overlay {
+    position: absolute;
+    top: 0; left: 0; width: 100%; height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    display: none; /* Hidden until triggered */
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+    text-align: center;
+}
+#cta-overlay img { max-width: 80%; pointer-events: auto; }
+#cta-icon { width: 120px; border-radius: 20px; margin-bottom: 20px; }
+#cta-text { width: 220px; margin-bottom: 30px; }
+#cta-button { 
+    width: 200px; 
+    cursor: pointer; 
+    transition: transform 0.2s;
+    animation: pulse 1.5s infinite; 
+}
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+    100% { transform: scale(1); }
+}
+
+
+/* Tutorial hand Styles */
+@keyframes solidTap {
+    0%, 100% { transform: scale(1) translateY(0); }
+    50% { transform: scale(0.85) translateY(20px); }
+}
+
     </style>
     <script type="importmap">
     {
@@ -57,6 +91,20 @@
 
         <!-- <div id="hint">Click a Char to move</div> -->
     </div>
+
+<div id="cta-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:9999;">
+    <img id="cta-icon" style="width:120px; border-radius:20px; margin-bottom:20px;">
+    <img id="cta-text" style="width:220px; margin-bottom:30px;">
+    <img id="cta-button" style="width:200px; cursor:pointer; animation: pulse 1.5s infinite;">
+</div>
+
+<div id="instruction-top" style="position: absolute; top: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 500; transition: opacity 0.3s;">
+    <div style="color: white; font-weight: bold; font-size: 32px; text-shadow: 3px 3px 6px rgba(0,0,0,0.8); font-family: 'Arial Black', sans-serif;">TAP TO SHOOT</div>
+</div>
+
+<div id="hand-guide-container" style="position: absolute; bottom: 16%; left: 60%; transform: translateX(-50%); pointer-events: none; z-index: 500; transition: opacity 0.3s;">
+    <img id="guide-hand" src="" style="width: 80px; filter: drop-shadow(0px 0px 8px rgba(0,0,0,0.4)); animation: solidTap 1.2s infinite ease-in-out;">
+</div>
 
     <script type="module">
         import * as THREE from 'three';
@@ -76,26 +124,8 @@ window.game_object = {
     GameElements: {
     CharModel: { name: "Character Model", data: "pig.glb" },
     ObstacleModel: { name: "Cube Unit", data: "Cube.glb" },
-    LevelImage: { name: "Level Layout Image", data: "Screenshot 2026-02-18 132325.png" },
-        // Matrix for the Moon/Character Pixel Art
-        CharacterPattern: [
-            [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
-            [4,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,4],
-            [0,0,0,0,0,2,2,1,1,1,2,2,0,0,0,0,0,0,0,0],
-            [0,0,0,0,2,1,1,1,1,1,1,1,2,0,0,0,0,0,0,0],
-            [0,0,0,2,1,1,1,1,2,2,1,1,1,2,0,0,0,0,0,0],
-            [0,0,2,1,1,1,1,2,0,0,2,1,1,1,2,0,2,2,0,0],
-            [0,2,1,1,1,1,1,2,0,0,2,1,1,1,1,2,1,1,2,0],
-            [0,2,1,1,3,3,1,1,2,2,1,1,1,1,1,1,2,1,2,0],
-            [0,2,1,1,3,3,1,1,1,1,1,1,2,2,1,1,1,2,0,0],
-            [0,2,1,1,1,1,1,1,1,1,2,2,1,1,2,1,1,2,0,0],
-            [0,0,2,1,1,1,1,1,2,2,1,1,1,2,1,2,2,0,0,0],
-            [0,0,0,2,1,1,1,1,1,1,1,1,2,0,2,0,0,0,0,0],
-            [0,0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0,0,0,0],
-            [0,0,0,0,0,0,2,2,2,2,0,0,0,2,2,0,0,0,0,0],
-            [4,0,0,0,0,0,0,0,0,0,0,0,2,1,1,2,0,0,0,4],
-            [4,4,4,4,0,0,0,0,0,0,0,0,0,2,2,0,4,4,4,4]
-        ]
+    LevelImage: { name: "Level Layout Image", data: "Screenshot 2026-02-12 163412.png" },
+ 
     },
 
     GameProperties: { 
@@ -103,7 +133,45 @@ window.game_object = {
       
         SpawnHeight: 0.85,
         CubeSize: { width: 3, height:  7, depth: 3 },
-        LevelSize: { rows: 18, cols: 18 }
+        LevelSize: { rows: 20, cols: 20 },
+        GameDuration: { name: "Game duration", amount:  45, type: "Integer" },
+        IdleHintDuration: { name: "Idle Hint Duration", amount: 8, type: "Integer" },
+         CurrentLevelIndex: 1, // Change this to switch levels easily
+        
+        Patterns: {
+            1: {
+                name: "Moon and Stars",
+                rows: 16,
+                cols: 20,
+                palette: {
+                    0: "#50e3fe", // Sky Cyan
+                    1: "#ffdf00", // Moon Yellow
+                    2: "#000000", // Outline Black
+                    3: "#ff7f27", // Cheek Orange
+                    4: "#b266ff"  // Border Purple
+                },
+                data: [
+                    [4,4,4,4,0,0,0,0,0,0,0,0,0,0,0,0,4,4,4,4],
+                    [4,0,0,0,0,0,0,2,2,2,0,0,0,0,0,0,0,0,0,4],
+                    [0,0,0,0,0,2,2,1,1,1,2,2,0,0,0,0,0,0,0,0],
+                    [0,0,0,0,2,1,1,1,1,1,1,1,2,0,0,0,0,0,0,0],
+                    [0,0,0,2,1,1,1,1,2,2,1,1,1,2,0,0,0,0,0,0],
+                    [0,0,2,1,1,1,1,2,0,0,2,1,1,1,2,0,2,2,0,0],
+                    [0,2,1,1,1,1,1,2,0,0,2,1,1,1,1,2,1,1,2,0],
+                    [0,2,1,1,3,3,1,1,2,2,1,1,1,1,1,1,2,1,2,0],
+                    [0,2,1,1,3,3,1,1,1,1,1,1,2,2,1,1,1,2,0,0],
+                    [0,2,1,1,1,1,1,1,1,1,2,2,1,1,2,1,1,2,0,0],
+                    [0,0,2,1,1,1,1,1,2,2,1,1,1,2,1,2,2,0,0,0],
+                    [0,0,0,2,1,1,1,1,1,1,1,1,2,0,2,0,0,0,0,0],
+                    [0,0,0,0,2,2,1,1,1,1,2,2,0,0,0,0,0,0,0,0],
+                    [0,0,0,0,0,0,2,2,2,2,0,0,0,2,2,0,0,0,0,0],
+                    [4,0,0,0,0,0,0,0,0,0,0,0,2,1,1,2,0,0,0,4],
+                    [4,4,4,4,0,0,0,0,0,0,0,0,0,2,2,0,4,4,4,4]
+                ]
+            }
+        }
+
+
     },
 
     GameThemes: {
@@ -133,15 +201,198 @@ window.game_object = {
         }
     },
         
+Ui: {
+     HandSprite: { data: "BubbleIdle.png" }
+ },
 
     Cta: {
-        
+        icon: { data: "Game Icon.png" }, 
+    text: { data: "GameTitle.png" }, 
+    playButton: { data: "play now.png" },
         playStoreLink: "https://play.google.com/store/apps/details?id=com.loomgames.pixelflow&hl=en_IN",
         appleStoreLink: "https://apps.apple.com/us/app/pixel-flow/id6751056652"
     }
 };
 
 
+
+
+/* =========================================================
+   GLOBAL INITIALIZATION
+   ========================================================= */
+
+
+//idle hand tutorial
+let lastInteractionTime = Date.now();
+const idleLimit = window.game_object.GameProperties.IdleHintDuration.amount * 1000; // 8 seconds in ms
+let firstTutorialCleared = false; // Tracks if the initial "Tap to Shoot" is gone
+// --- SMART HAND CALCULATOR ---
+function positionHandOnSmartTarget() {
+    if (gameEnded) return;
+
+    // 1. Find which color has the most "Visible" (unblocked) cubes left
+    const cubeColorPriority = {};
+    cubesToSmash.forEach(cube => {
+        if (!cube.userData.blocked) {
+            const color = cube.userData.colorName;
+            cubeColorPriority[color] = (cubeColorPriority[color] || 0) + 1;
+        }
+    });
+
+    // 2. Look through characters in the grid and find those that are NOT blocked
+    let bestChar = null;
+    let highestScore = -1;
+
+    for (let c = 0; c < GRID; c++) {
+        // Only look at the "Top-most" character in each column (unblocked ones)
+        let topChar = null;
+        for (let r = 0; r < GRID; r++) {
+            if (occupancy[r][c]) {
+                topChar = occupancy[r][c];
+                break; // Found the front pig in this column
+            }
+        }
+
+        if (topChar) {
+            const charColor = topChar.userData.colorName;
+            const cubeCount = cubeColorPriority[charColor] || 0;
+
+            // Simple brain: If this pig's color matches available cubes, it's a good target
+            if (cubeCount > highestScore) {
+                highestScore = cubeCount;
+                bestChar = topChar;
+            }
+        }
+    }
+
+    // 3. Move the Hand to the 2D Screen Position of the 3D Pig
+    if (bestChar) {
+        const vector = new THREE.Vector3();
+        bestChar.updateMatrixWorld(); // Sync positions
+        vector.setFromMatrixPosition(bestChar.matrixWorld);
+        
+        // Push vector to screen space (-1 to +1 range)
+        vector.project(camera);
+
+        // Convert -1/+1 to pixels (0 to width/height)
+        const x = (vector.x * .5 + .5) * renderer.domElement.clientWidth;
+        const y = (vector.y * -.5 + .5) * renderer.domElement.clientHeight;
+
+        // Apply to the Hand Container
+      // --- DYNAMIC POSITIONING FOR BOTTOM-RIGHT CORNER ---
+const handUI = document.getElementById('hand-guide-container');
+
+if (bestChar && handUI) {
+    const vector = new THREE.Vector3();
+    bestChar.updateMatrixWorld();
+    vector.setFromMatrixPosition(bestChar.matrixWorld);
+    
+    // Project 3D position to 2D screen space
+    vector.project(camera);
+
+    // Convert to CSS Pixels
+    const x = (vector.x * .5 + .5) * renderer.domElement.clientWidth;
+    const y = (vector.y * -.5 + .5) * renderer.domElement.clientHeight;
+
+    // Apply Positioning
+    handUI.style.left = (x + 30) + "px";   // Move 60px RIGHT
+    handUI.style.top = (y + 10) + "px";    // Move 60px DOWN
+    handUI.style.bottom = 'auto';          // Ensure it's not fighting existing CSS
+    handUI.style.transform = 'translate(-50%, -50%)'; // Anchor to center of image
+}
+    }
+}
+// Reusable functions to show/hide the hand
+function showIdleHint() {
+    const hand = document.getElementById('hand-guide-container');
+    const text = document.getElementById('instruction-top');
+    
+    // Safety: only show if the elements still exist and it's not the end of the game
+    if (hand && text && !gameEnded) {
+        // Only run the calculation if the hand is currently hidden
+        if (hand.style.display === 'none' || hand.style.opacity === "0") {
+            
+            // CALCULATE THE NEW POSITION OF THE SMART TARGET
+            positionHandOnSmartTarget(); 
+
+            hand.style.display = 'block';
+            text.style.display = 'block';
+            // Smoothly fade back in
+            setTimeout(() => {
+                hand.style.opacity = "1";
+                text.style.opacity = "1";
+            }, 50);
+        }
+    }
+}
+
+function hideIdleHint() {
+    const hand = document.getElementById('hand-guide-container');
+    const text = document.getElementById('instruction-top');
+    if (hand && text) {
+        hand.style.opacity = "0";
+        text.style.opacity = "0";
+        // Hide after fade animation
+        setTimeout(() => {
+            if (hand.style.opacity === "0") {
+                hand.style.display = 'none';
+                text.style.display = 'none';
+            }
+        }, 300);
+    }
+}
+
+//hand style tutorial
+const handImg = document.getElementById('guide-hand');
+if (handImg) handImg.src = window.game_object.Ui.HandSprite.data;
+
+// Function to clear tutorial
+function clearTutorial() {
+    const text = document.getElementById('instruction-top');
+    const hand = document.getElementById('hand-guide-container');
+    
+    if (text) text.style.opacity = "0";
+    if (hand) hand.style.opacity = "0";
+    
+    // Do NOT use .remove(). Use display: none instead
+    setTimeout(() => {
+        if (text) text.style.display = 'none';
+        if (hand) hand.style.display = 'none';
+    }, 350);
+}
+
+// Timer and Game State
+let isTimerActive = false;
+let gameEnded = false;
+let timeLeft = window.game_object.GameProperties.GameDuration.amount;
+
+// Initialize the Endscreen Images from Game Object
+function initCTA() {
+    const cta = window.game_object.Cta;
+    document.getElementById('cta-icon').src = cta.icon.data;
+    document.getElementById('cta-text').src = cta.text.data;
+    document.getElementById('cta-button').src = cta.playButton.data;
+    
+    document.getElementById('cta-button').onclick = () => {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        const link = isIOS ? cta.appleStoreLink : cta.playStoreLink;
+        window.open(link, '_blank');
+    };
+}
+initCTA();
+
+function triggerCTA() {
+    if (gameEnded) return;
+    gameEnded = true;
+    document.getElementById('cta-overlay').style.display = 'flex';
+}
+
+// Logic to insert into onPointerDown (after character detection)
+function startTimerOnInteraction() {
+    if (!isTimerActive && !gameEnded) {
+        isTimerActive = true;
+    }
+}
 
         const container = document.getElementById('canvas-container');
         const scene = new THREE.Scene();
@@ -215,21 +466,21 @@ camera.lookAt(0, -2, -3);     // Look slightly ahead into the scene
         const moonPattern = window.game_object.GameElements.CharacterPattern;
 
         // Calculate color frequencies in moonPattern for weighted spawning
-        const colorFrequency = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
-        moonPattern.forEach(row => {
-            row.forEach(code => {
-                colorFrequency[code]++;
-            });
-        });
+        // const colorFrequency = { 0: 0, 1: 0, 2: 0, 3: 0, 4: 0 };
+        // moonPattern.forEach(row => {
+        //     row.forEach(code => {
+        //         colorFrequency[code]++;
+        //     });
+        // });
         
-        // Create weighted color pool for spawned Chars (matches cube distribution)
-        const weightedColorPool = [];
-        Object.keys(colorFrequency).forEach(code => {
-            const frequency = colorFrequency[code];
-            for (let i = 0; i < frequency; i++) {
-                weightedColorPool.push(colors[parseInt(code)]);
-            }
-        });
+        // // Create weighted color pool for spawned Chars (matches cube distribution)
+        // const weightedColorPool = [];
+        // Object.keys(colorFrequency).forEach(code => {
+        //     const frequency = colorFrequency[code];
+        //     for (let i = 0; i < frequency; i++) {
+        //         weightedColorPool.push(colors[parseInt(code)]);
+        //     }
+        // });
 
         // ========================================================
         // AUTO-ARRANGE FUNCTION: Image to Level Parser
@@ -772,16 +1023,18 @@ function updateCharLabel(Char) {
 
         parseImageToLevel(window.game_object.GameElements.LevelImage.data, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
             // 1. COUNT EVERY CUBE PER COLOR (The Census)
-            const colorCensus = {};
-            autoPattern.forEach(row => {
-                row.forEach(id => {
-                    const color = cubeColorsData[id].code;
-                    colorCensus[color] = (colorCensus[color] || 0) + 1;
-                });
-            });
+         
+const colorCensus = {};
+autoPattern.forEach(row => {
+    row.forEach(id => {
+        const color = cubeColorsData[id].code;
+        // NO MORE IF CHECKS - Count everything!
+        colorCensus[color] = (colorCensus[color] || 0) + 1;
+    });
+});
 
-            // Remove background/black from mission colors
-            activeLevelColors = Object.keys(colorCensus).filter(c => c !== '#000000');
+//activeLevelColors now contains every color found in your image palette
+activeLevelColors = Object.keys(colorCensus);
             console.log('Active Mission Colors (from level pattern):', activeLevelColors, 'Census:', colorCensus);
 
             // 2. Load Cubes and place them
@@ -794,61 +1047,60 @@ function updateCharLabel(Char) {
     const cubeSpacing = 0.27; 
     const wallHeight = 13; // Target Y-height
 
-    for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-            const colorCode = autoPattern[r][c];
-            const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
+ 
+for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+        const colorCode = autoPattern[r][c];
+        const colorHex = window.game_object.GameThemes.CubeColors.data[colorCode].code;
 
-            const clone = cubeModel.clone();
-            
-            // SET SCALE: High Y-value for that "Pillar" look from reference
-            // Adjust X and Z scale to 2.8 - 3.0 to remove gaps between columns
-            clone.scale.set(3.1, wallHeight, 3.1); 
+        // REMOVE any line that says "if (colorHex === ...) continue;" 
+        // We want every pixel to be a block.
 
-            // POSITION:
-            // X and Z are centered.
-            // Y is set to (wallHeight/2 - offset) so the bottom is at the ground level
-            const posX = (c - (cols - 1) / 2) * cubeSpacing;
-            const posZ = (r - (rows - 1) / 2) * cubeSpacing;
-            
-            // Base at ground: we offset the pivot by moving Y half its height
-            // We set Y to ~0.5 relative to ground, and Z is -2.7 to stay in tread area
-            clone.position.set(posX, (wallHeight * 0.1) - 1.5, posZ - 2.7);
+        const clone = cubeModel.clone();
+        clone.scale.set(3.1, wallHeight, 3.1); 
+        const posX = (c - (cols - 1) / 2) * cubeSpacing;
+        const posZ = (r - (rows - 1) / 2) * cubeSpacing;
+        clone.position.set(posX, (wallHeight * 0.1) - 1.5, posZ - 2.7);
 
-            clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
+        clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
 
-            // Apply Shiny Plastic Material (like the reference)
-            clone.traverse(n => {
-                if (n.isMesh) {
-                    n.material = new THREE.MeshStandardMaterial({
-                        color: colorHex,
-                        roughness: 0.1, // Shiny surface
-                        metalness: 0.2
-                    });
-                }
-            });
-            scene.add(clone);
-            cubesToSmash.push(clone);
-        }
+        clone.traverse(n => {
+            if (n.isMesh) {
+                n.material = new THREE.MeshStandardMaterial({
+                    color: colorHex,
+                    roughness: 0.1, 
+                    metalness: 0.2
+                });
+            }
+        });
+        scene.add(clone);
+        cubesToSmash.push(clone);
     }
+}
                 updateObstacleStatus();
 
                 // 3. DEFINE THE FINITE 9 CHARACTERS WITH MATHEMATICAL AMMO
-                const pigPlan = [];
-                for (let i = 0; i < GRID * GRID; i++) {
-                    // Assign colors from mission colors only
-                    pigPlan.push({
-                        color: activeLevelColors[i % activeLevelColors.length]
-                    });
-                }
+              
+const pigPlan = [];
+for (let i = 0; i < GRID * GRID; i++) {
+    // This distributes all mission colors (including Black) across the 9 pigs
+    pigPlan.push({
+        color: activeLevelColors[i % activeLevelColors.length]
+    });
+}
 
-                // 4. DISTRIBUTE AMMO FAIRLY
-                // Math: Ammo per character = (Total Cubes of color X) / (Total Characters of color X) + 2 buffer
-                pigPlan.forEach(plan => {
-                    const charCountOfThisColor = pigPlan.filter(p => p.color === plan.color).length;
-                    const totalCubesNeeded = colorCensus[plan.color];
-                    plan.ammo = Math.ceil(totalCubesNeeded / charCountOfThisColor) + 2;
-                });
+// 4. CALCULATE ACCURATE AMMO (Including Black)
+// --- AMMO CALCULATION WITH 50 LIMIT ---
+pigPlan.forEach(plan => {
+    const charCountOfThisColor = pigPlan.filter(p => p.color === plan.color).length;
+    const totalCubesNeeded = colorCensus[plan.color] || 0;
+    
+    // 1. Calculate raw ammo needed to clear the cubes
+    const rawAmmo = Math.ceil(totalCubesNeeded / charCountOfThisColor) + 2;
+
+    // 2. APPLY LIMIT: Use Math.min to cap it at 50
+    plan.ammo = Math.min(rawAmmo, 60);
+});
 
                 console.log('Pig Plan (9 characters with calculated ammo):', pigPlan);
 
@@ -1015,7 +1267,7 @@ function playCubePopAnimation(cube, cubeColor) {
     const originalScaleX = cubeSize.width;
     const originalScaleY = cubeSize.height;
     const originalScaleZ = cubeSize.depth;
-    const popDuration = 1000;
+    const popDuration = 500;
 
     addAnim({
         elapsed: 0, duration: popDuration,
@@ -1178,7 +1430,7 @@ async function shootAtCubes(pig) {
 
     while (pig.userData.moving && pig.userData.value > 0) {
         let target = null;
-        let minDist = 7;
+        let minDist = 5;
 
         cubesToSmash.forEach((cube, index) => {
             if (cube.userData.colorName === myColor && !cube.userData.blocked) {
@@ -1272,9 +1524,9 @@ function buildIndustrialPath() {
         new THREE.Vector3(-2.0, h, 0.7),    // START: Entry (centered bottom)
         new THREE.Vector3(2, h, 0.7),       // Mid-entry point for smooth start
         new THREE.Vector3(3.0, h, 0.51),     // Front-Right corner (centered)
-        new THREE.Vector3(3.0, h, -6.0),    // Back-Right corner (centered)
-        new THREE.Vector3(0, h, -6.5),      // Mid-back point
-        new THREE.Vector3(-3.0, h, -6.0),   // Back-Left corner (centered)
+        new THREE.Vector3(3.0, h, -5.8),    // Back-Right corner (centered)
+        new THREE.Vector3(0, h, -6.2),      // Mid-back point
+        new THREE.Vector3(-3.0, h, -5.8),   // Back-Left corner (centered)
         new THREE.Vector3(-3.5, h, -0.5)     // EXIT: Blue Arrow end (centered)
     ]);
 
@@ -1422,6 +1674,21 @@ async function performMillTravel(pig, targetTile) {
     }
 
     if (!Char || Char.userData.moving) return;
+lastInteractionTime = Date.now(); 
+clearTutorial(); // Hide it for now
+ if (!isTimerActive) {
+            isTimerActive = true; // Start the 45s countdown
+        }
+        hideIdleHint(); 
+        
+        if (!firstTutorialCleared) {
+            firstTutorialCleared = true; 
+            startTimerOnInteraction(); // Starts the 45s Game timer
+        }
+
+
+ clearTutorial();          // Hide Instruction and Hand
+startTimerOnInteraction(); // TRIGGER TIMER HERE
 
     // --- CHECK CURRENT CAPACITY ---
     const nextAvailableSlot = tileOccupancy.indexOf(null);
@@ -1547,15 +1814,20 @@ function spawnNewChar(row, col) {
     label.renderOrder = 999;
     newChar.add(label);
 
-    newChar.traverse((node) => {
-        if (node.isMesh) {
-            node.castShadow = true;
-            node.receiveShadow = true;
-            node.material = node.material.clone();
-            if (node.material.color) node.material.color.set(missionColor);
-            node.userData.parentChar = newChar;
-        }
-    });
+newChar.traverse((node) => {
+    if (node.isMesh) {
+        node.castShadow = true;
+        node.receiveShadow = true;
+        node.material = node.material.clone();
+        
+        // If color is pure black, use dark gray so the shape remains visible
+        let modelColor = color;
+        if (modelColor === "#000000") modelColor = "#1a1a1a"; 
+
+        if (node.material.color) node.material.color.set(modelColor);
+        node.userData.parentChar = clone;
+    }
+});
 
     const x = (col - Math.floor(GRID/2)) * spacingGlobal;
     const z = (row - Math.floor(GRID/2)) * spacingGlobal + 7;
@@ -1601,42 +1873,58 @@ function shiftColumnForward(vacatedRow, col) {
         }
         window.addEventListener('resize', onWindowResize);
         window.addEventListener('orientationchange', onWindowResize);
+         if (document.getElementById('hand-guide-container').style.display === 'block') {
+        positionHandOnSmartTarget();
+    }
+ function animate() {
+    requestAnimationFrame(animate);
+    const dt = Math.min(clock.getDelta() * 1000, 40);
 
-        function animate() {
-            requestAnimationFrame(animate);
-            const dt = Math.min(clock.getDelta() * 1000, 40); // dt in ms, capped
-            totalTime += dt * 0.0003; // Game time in seconds
-            processAnims(dt);
+    if (!gameEnded) {
+        const currentTime = Date.now();
+        const timeSinceLastTap = currentTime - lastInteractionTime;
 
-            // --- CHARACTER EXCITEMENT LOGIC ---
-            // Target characters in the 3x3 grid
-            for (let r = 0; r < GRID; r++) {
-                for (let c = 0; c < GRID; c++) {
-                    const char = occupancy[r][c];
-                    if (char && !char.userData.moving) {
-                        // 1. Swing back and forth (X-rotation for sway)
-                        // Offset by grid position so they don't move like robots
-                        char.rotation.x = Math.sin(totalTime * 8 + r + c) * 0.15;
+        // If timer has started (after first click)
+        if (isTimerActive) {
+            timeLeft -= dt / 1000;
 
-                        // 2. Small "nervous" breathing hop
-                        char.position.y = 0.5 + Math.abs(Math.sin(totalTime * 4 + r + c)) * 0.05;
-                    }
-                }
+            // --- CHECK FOR END GAME CONDITIONS ---
+            // 1. Time out OR 2. All cubes are destroyed (Victory)
+            if (timeLeft <= 0 || cubesToSmash.length === 0) {
+                triggerCTA();
             }
-
-            // Target characters sitting on Tiles
-            tileOccupancy.forEach((char, idx) => {
-                if (char && !char.userData.moving) {
-                    // Sway back and forth
-                    char.rotation.x = Math.sin(totalTime * 8 + idx) * 0.15;
-                    // Sitting breath hop
-                    char.position.y = 0.3 + Math.abs(Math.sin(totalTime * 4 + idx)) * 0.05;
-                }
-            });
-
-            controls.update();
-            renderer.render(scene, camera);
+            
+            // CHECK 2: Show Idle hint if player stops for 8s
+            if (timeSinceLastTap > 8000) {
+                showIdleHint();
+            }
         }
+    }
+
+    totalTime += dt * 0.0003; 
+    processAnims(dt);
+
+    // --- CHARACTER EXCITEMENT LOGIC ---
+    for (let r = 0; r < GRID; r++) {
+        for (let c = 0; c < GRID; c++) {
+            const char = occupancy[r][c];
+            if (char && !char.userData.moving) {
+                char.rotation.x = Math.sin(totalTime * 8 + r + c) * 0.15;
+                char.position.y = 0.5 + Math.abs(Math.sin(totalTime * 4 + r + c)) * 0.05;
+            }
+        }
+    }
+
+    tileOccupancy.forEach((char, idx) => {
+        if (char && !char.userData.moving) {
+            char.rotation.x = Math.sin(totalTime * 8 + idx) * 0.15;
+            char.position.y = 0.3 + Math.abs(Math.sin(totalTime * 4 + idx)) * 0.05;
+        }
+    });
+
+    controls.update();
+    renderer.render(scene, camera);
+}
         animate();
     </script>
 </body>
