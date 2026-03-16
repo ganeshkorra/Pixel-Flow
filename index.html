@@ -124,7 +124,7 @@ window.game_object = {
     GameElements: {
     CharModel: { name: "Character Model", data: "pig.glb" },
     ObstacleModel: { name: "Cube Unit", data: "Cube.glb" },
-    LevelImage: { name: "Level Layout Image", data: "Screenshot 2026-02-12 163412.png" },
+    LevelImage: { name: "Level Layout Image", data: "Screenshot 2026-03-16 185515.png" },
  
     },
 
@@ -533,7 +533,7 @@ camera.lookAt(0, -2, -3);     // Look slightly ahead into the scene
 
 function createCharLabelTexture(text) {
     const canvas = document.createElement('canvas');
-    canvas.width = 256;
+    canvas.width = 300;
     canvas.height = 256;
     const ctx = canvas.getContext('2d');
 
@@ -1080,7 +1080,7 @@ pigPlan.forEach(plan => {
     const rawAmmo = Math.ceil(totalCubesNeeded / charCountOfThisColor) + 2;
 
     // 2. APPLY LIMIT: Use Math.min to cap it at 50
-    plan.ammo = Math.min(rawAmmo, 60);
+    plan.ammo = Math.min(rawAmmo, 300);
 });
 
                 console.log('Pig Plan (9 characters with calculated ammo):', pigPlan);
@@ -1299,29 +1299,67 @@ function playCubePopAnimation(cube, cubeColor) {
 function activateSquareAtEntry(character) {
     if (squareClones.length === 0 || !characterPathRail) return;
     
-    const square = squareClones[nextSquareIndex % squareClones.length];
+    // 1. Pick a Reference square from the tray
+    const originalTraySquare = squareClones[nextSquareIndex % squareClones.length];
     nextSquareIndex++;
-    if (character) character.userData.activeSquare = square;
-    
-    const startPos = square.position.clone();
-    const railStart = characterPathRail.getPointAt(0);
-    
-    // Scale down to 0.45 when traveling
-    square.scale.setScalar(0.2);
 
+    // 2. THE TRANSPORT CLONE: Create it and start journey immediately
+    const journeySquare = originalTraySquare.clone(); 
+    scene.add(journeySquare);
+    if (character) character.userData.activeSquare = journeySquare;
+    
+    const startPos = originalTraySquare.position.clone();
+    const railStart = characterPathRail.getPointAt(0);
+    journeySquare.scale.setScalar(0.2); // Journey scale
+
+    // 3. THE TRAY RESPOND: "Power down" the slot in the tray
+    originalTraySquare.visible = false; // Hide it immediately
+    originalTraySquare.scale.setScalar(0); // Shrink it while invisible
+
+    // 4. THE DELAY LOGIC (Reload Time)
+    const reloadTime = 700; // Change this value to adjust the delay (700ms)
+    
+    setTimeout(() => {
+        animateSquareRespawn(originalTraySquare); // Run respawn animation after delay
+    }, reloadTime);
+
+    // 5. Journey Animation (Starts fast)
     addAnim({
         elapsed: 0, duration: 190,
         update(dt) {
             this.elapsed += dt;
             const t = Math.min(this.elapsed / this.duration, 1);
-            square.position.lerpVectors(startPos, railStart, t);
-            
-            // The Backward Flip
+            journeySquare.position.lerpVectors(startPos, railStart, t);
             const flip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -t * Math.PI / 2);
-            square.quaternion.copy(flip);
+            journeySquare.quaternion.copy(flip);
+            return t >= 1;
+        }
+    });
+}
+function animateSquareRespawn(sq) {
+    sq.visible = true; // Turn visibility back on
+    
+    // Custom "Scale Bounce" Animation (0 -> 1.2 -> 1)
+    addAnim({
+        elapsed: 0, duration: 350,
+        update(dt) {
+            this.elapsed += dt;
+            const t = this.elapsed / this.duration;
             
-            if (t >= 1) return true;
-            return false;
+            // Industrial Bounce Formula
+            let scaleEffect = 0;
+            if (t < 0.7) {
+                // Scaling up from 0 to 1.2
+                scaleEffect = (t / 0.7) * 1.2;
+            } else {
+                // Settling down from 1.2 back to 1
+                const settleT = (t - 0.7) / 0.3;
+                scaleEffect = 1.2 - (settleT * 0.2);
+            }
+            
+            sq.scale.setScalar(scaleEffect * sq.userData.originalScale);
+            
+            return t >= 1;
         }
     });
 }
@@ -1616,15 +1654,22 @@ async function performMillTravel(pig, targetTile) {
     });
 
     // EXIT LOGIC
-    if (square) {
-        const exitPos = new THREE.Vector3(-4.5, h, 2.5);
-        tweenPosition(square, square.position.clone(), exitPos, 500).then(() => {
-            square.position.copy(square.userData.originalPos);
-            square.quaternion.set(0, 0, 0, 1);
-            // Restore to normal size
-            square.scale.setScalar(square.userData.originalScale);
+    // --- UPDATED EXIT LOGIC (Replenish System) ---
+if (square) {
+    const exitPos = new THREE.Vector3(-4.5, h, 2.5); // Point toward the edge
+    
+    // Slide it out of the treadmill view then destroy it
+    tweenPosition(square, square.position.clone(), exitPos, 300).then(() => {
+        scene.remove(square); // Clean up the clone from the scene
+        // Dispose memory
+        square.traverse(n => {
+            if (n.isMesh) {
+                if (n.geometry) n.geometry.dispose();
+                if (n.material) n.material.dispose();
+            }
         });
-    }
+    });
+}
 
     const pFinal = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
     pig.rotation.y = Math.PI / 2; 
