@@ -76,6 +76,24 @@
     50% { transform: scale(0.85) translateY(20px); }
 }
 
+
+#slot-counter {
+    position: absolute;
+    pointer-events: none;
+    color: white;
+    font-weight: bold;
+    font-size: 18px;
+    font-family: 'Arial Black', sans-serif;
+    /* High quality text outline */
+    text-shadow: 
+        -2px -2px 0 #000, 2px -2px 0 #000, 
+        -2px  2px 0 #000, 2px  2px 0 #000,
+         3px  3px 5px rgba(0,0,0,0.5);
+    z-index: 600;
+    display: none; /* Shows after loader */
+}
+
+
     </style>
     <script type="importmap">
     {
@@ -91,7 +109,7 @@
 
         <!-- <div id="hint">Click a Char to move</div> -->
     </div>
-
+<div id="slot-counter">0/3</div>
 <div id="cta-overlay" style="position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.85); display:none; flex-direction:column; align-items:center; justify-content:center; z-index:9999;">
     <img id="cta-icon" style="width:120px; border-radius:20px; margin-bottom:20px;">
     <img id="cta-text" style="width:220px; margin-bottom:30px;">
@@ -607,63 +625,56 @@ function updateCharLabel(Char) {
             tileOccupancy = Array(tileCount).fill(null);
             
             // Function to create a styled tile with base and border
-            function createStyledTile(x, z) {
-                const tileGroup = new THREE.Group();
-                
-                // Base tile - main platform
-                const baseGeom = new THREE.BoxGeometry(tileSize, tileHeight, tileSize);
-                const baseMat = new THREE.MeshStandardMaterial({ 
-                    color: 0x1f2937,
-                    metalness: 0.3,
-                    roughness: 0.6
-                });
-                const baseMesh = new THREE.Mesh(baseGeom, baseMat);
-                baseMesh.position.y = tileHeight / 2;
-                baseMesh.castShadow = false;
-                baseMesh.receiveShadow = true;
-                tileGroup.add(baseMesh);
-                
-                // Border rim - top edge highlight
-                const rimGeom = new THREE.TorusGeometry(tileSize * 0.48, tileSize * 0.05, 8, 32);
-                const rimMat = new THREE.MeshStandardMaterial({ 
-                    color: 0x6366f1,
-                    metalness: 0.6,
-                    roughness: 0.3,
-                    visible : false,
-                    emissive: 0x4f46e5,
-                    emissiveIntensity: 0.5
-                });
-                const rimMesh = new THREE.Mesh(rimGeom, rimMat);
-                rimMesh.position.y = tileHeight + 0.05;
-                rimMesh.rotation.x = Math.PI / 2;
-                rimMesh.receiveShadow = false;
-                rimMesh.castShadow = false;
-                tileGroup.add(rimMesh);
-                
-                // Light indicator sphere (glowing center)
-                const indicatorGeom = new THREE.SphereGeometry(tileSize * 0, 16, 16);
-                const indicatorMat = new THREE.MeshStandardMaterial({ 
-                    color: 0x3b82f6,
-                    emissive: 0x60a5fa,
-                    emissiveIntensity: 0.8,
-                    metalness: 0.4
-                });
-                const indicatorMesh = new THREE.Mesh(indicatorGeom, indicatorMat);
-                indicatorMesh.position.y = tileHeight + 0.1;
-                indicatorMesh.receiveShadow = false;
-                indicatorMesh.castShadow = false;
-                tileGroup.add(indicatorMesh);
-                
-                tileGroup.position.set(x, 0, z);
-                tileGroup.userData = { 
-                    baseColor: 0x1f2937,
-                    rimMesh: rimMesh,
-                    indicatorMesh: indicatorMesh,
-                    baseMesh: baseMesh
-                };
-                
-                return tileGroup;
-            }
+          function createStyledTile(x, z) {
+    const tileGroup = new THREE.Group();
+    const tileSize = Math.min(spacingGlobal * 0.9, 1.2);
+    const tileHeight = 0.08;
+    
+    // 1. The main platform
+    const baseMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(tileSize, tileHeight, tileSize),
+        new THREE.MeshStandardMaterial({ color: 0x1f2937 })
+    );
+    baseMesh.position.y = tileHeight / 2;
+    tileGroup.add(baseMesh);
+    
+    // 2. The RIM (Blue glow border - used for active status)
+    const rimMesh = new THREE.Mesh(
+        new THREE.TorusGeometry(tileSize * 0.48, tileSize * 0.05, 8, 32),
+        new THREE.MeshStandardMaterial({ color: 0x6366f1, transparent: true, visible: false })
+    );
+    rimMesh.position.y = tileHeight + 0.05;
+    rimMesh.rotation.x = Math.PI / 2;
+    tileGroup.add(rimMesh);
+
+    // 3. The INDICATOR (Required by your other functions)
+    const indicatorMesh = new THREE.Mesh(
+        new THREE.SphereGeometry(0.1, 16, 16),
+        new THREE.MeshStandardMaterial({ color: 0x3b82f6, visible: false })
+    );
+    indicatorMesh.position.y = tileHeight + 0.1;
+    tileGroup.add(indicatorMesh);
+
+    // 4. THE RED WARNING FRAME (Natural Fail Effect)
+    const warningFrame = new THREE.Mesh(
+        new THREE.BoxGeometry(tileSize * 1.15, tileHeight * 1.5, tileSize * 1.15),
+        new THREE.MeshBasicMaterial({ color: 0xff0000, transparent: true, opacity: 0 })
+    );
+    warningFrame.position.y = tileHeight / 2;
+    tileGroup.add(warningFrame);
+    
+    tileGroup.position.set(x, 0, z);
+    
+    // Store every key expected by the script
+    tileGroup.userData = { 
+        baseMesh: baseMesh,
+        rimMesh: rimMesh, 
+        indicatorMesh: indicatorMesh,
+        warningFrame: warningFrame 
+    };
+    
+    return tileGroup;
+}
             
             for (let i = 0; i < tileCount; i++) {
                 const xPos = (i - Math.floor(tileCount/2)) * spacing;
@@ -677,53 +688,35 @@ function updateCharLabel(Char) {
         });
 
         // Function to update tile appearance when character lands
-        function updateTileAppearance(tileIndex, characterColor) {
-            if (tileIndex >= 0 && tileIndex < tiles.length) {
-                const tile = tiles[tileIndex];
-                const rimMesh = tile.userData.rimMesh;
-                const indicatorMesh = tile.userData.indicatorMesh;
-                
-                // Update rim color to match character
-                rimMesh.material.color.setStyle(characterColor);
-                rimMesh.material.emissive.setStyle(characterColor);
-                
-                // Update indicator glow
-                indicatorMesh.material.color.setStyle(characterColor);
-                indicatorMesh.material.emissive.setStyle(characterColor);
-                
-                // Pulse animation on landing
-                addAnim({
-                    elapsed: 0, duration: 300,
-                    update(dt) {
-                        this.elapsed += dt;
-                        const t = this.elapsed / this.duration;
-                        const pulseFactor = 1 + Math.sin(t * Math.PI * 2) * 0.3;
-                        indicatorMesh.scale.setScalar(pulseFactor);
-                        if (t >= 1) {
-                            indicatorMesh.scale.setScalar(1);
-                            return true;
-                        }
-                        return false;
-                    }
-                });
-            }
-        }
+      function updateTileAppearance(tileIndex, characterColor) {
+    // Safety check: ensure tile index exists
+    if (tileIndex === undefined || tileIndex < 0 || !tiles[tileIndex]) return;
 
+    const tile = tiles[tileIndex];
+    const rim = tile.userData.rimMesh;
+    const indicator = tile.userData.indicatorMesh;
+
+    // Check if parts exist before setting color
+    if (rim && rim.material) {
+        rim.visible = true;
+        rim.material.color.set(characterColor);
+    }
+    if (indicator && indicator.material) {
+        indicator.visible = true;
+        indicator.material.color.set(characterColor);
+    }
+}
         // Function to reset tile to default appearance
-        function resetTileAppearance(tileIndex) {
-            if (tileIndex >= 0 && tileIndex < tiles.length) {
-                const tile = tiles[tileIndex];
-                const rimMesh = tile.userData.rimMesh;
-                const indicatorMesh = tile.userData.indicatorMesh;
-                
-                // Reset to default colors
-                rimMesh.material.color.setHex(0x6366f1);
-                rimMesh.material.emissive.setHex(0x4f46e5);
-                indicatorMesh.material.color.setHex(0x3b82f6);
-                indicatorMesh.material.emissive.setHex(0x60a5fa);
-                indicatorMesh.scale.setScalar(1);
-            }
-        }
+      function resetTileAppearance(tileIndex) {
+    if (tileIndex === undefined || tileIndex < 0 || !tiles[tileIndex]) return;
+
+    const tile = tiles[tileIndex];
+    const rim = tile.userData.rimMesh;
+    const indicator = tile.userData.indicatorMesh;
+
+    if (rim) rim.visible = false;
+    if (indicator) indicator.visible = false;
+}
 
         // Material definitions based on reference image
         // Slot: Darker blue-purple tone
@@ -1295,7 +1288,34 @@ function playCubePopAnimation(cube, cubeColor) {
         }
     });
 }
+// --- CAPACITY UI BRAIN ---
+function updateSlotCounterUI() {
+    const label = document.getElementById('slot-counter');
+    const slotModel = scene.children.find(c => c.type === "Group" && c.position.x < -2); // Find slot
 
+    if (!label || !slotModel || squareClones.length === 0) return;
+
+    // 1. Calculate count (Ready squares / Total slots)
+    const available = squareClones.filter(sq => sq.visible).length;
+    label.innerText = `${available}/3`;
+    label.style.display = 'block';
+
+    // 2. Position label in 3D-to-2D Screen Space
+    const vector = new THREE.Vector3(-2.8, -0.5, 1.2); // Position near the tray
+    vector.project(camera);
+
+    const x = (vector.x * .5 + .5) * renderer.domElement.clientWidth;
+    const y = (vector.y * -.5 + .5) * renderer.domElement.clientHeight;
+
+    label.style.left = x + 'px';
+    label.style.top = y + 'px';
+    label.style.transform = 'translate(-50%, 0)';
+    if (available === 0) {
+    label.style.color = "#ff3333"; // Warning Red
+} else {
+    label.style.color = "#ffffff"; // Standard White
+}
+}
 function activateSquareAtEntry(character) {
     if (squareClones.length === 0 || !characterPathRail) return;
     
@@ -1314,6 +1334,7 @@ function activateSquareAtEntry(character) {
 
     // 3. THE TRAY RESPOND: "Power down" the slot in the tray
     originalTraySquare.visible = false; // Hide it immediately
+    updateSlotCounterUI(); // <--- ADD THIS
     originalTraySquare.scale.setScalar(0); // Shrink it while invisible
 
     // 4. THE DELAY LOGIC (Reload Time)
@@ -1338,7 +1359,7 @@ function activateSquareAtEntry(character) {
 }
 function animateSquareRespawn(sq) {
     sq.visible = true; // Turn visibility back on
-    
+    updateSlotCounterUI(); 
     // Custom "Scale Bounce" Animation (0 -> 1.2 -> 1)
     addAnim({
         elapsed: 0, duration: 350,
@@ -1605,79 +1626,113 @@ async function performMillTravel(pig, targetTile) {
     
     pig.userData.moving = true;
     const square = pig.userData.activeSquare;
-    const h = 0.81; // Surface height
+    const h = 0.81;
 
-    // Lock for "Flat Only" rotation
-    const flatFlip = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), -Math.PI / 2);
-
+    // STEP 1: PATH TRAVEL
     await new Promise(resolve => {
         let progress = 0;
         shootAtCubes(pig); 
-
         addAnim({
             duration: 3800, 
             update(dt) {
                 progress += dt / this.duration;
                 const t = Math.min(progress, 1);
-
-                // 1. Get current path points
                 const railPos = characterPathRail.getPointAt(t);
                 const aheadPos = characterPathRail.getPointAt(Math.min(t + 0.01, 1));
-
-                // 2. CALCULATE "SLIGHT LEFT" OFFSET
-                // We find the direction the belt is moving, then find the vector pointing left
                 const direction = new THREE.Vector3().subVectors(aheadPos, railPos).normalize();
                 const sideVector = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), direction).normalize();
-                
-                // OFFSET AMOUNT: Change -0.12 to nudge more or less to the left
-                const leftShift = sideVector.multiplyScalar(-0.35);
-
-                // 3. POSITION SQUARE (With Left Shift)
                 if (square) {
-                    square.position.copy(railPos).add(leftShift);
+                    square.position.copy(railPos).add(sideVector.multiplyScalar(-0.35));
                     square.position.y = h; 
-
-                    // Keep rotation flat only
                     square.lookAt(aheadPos.x, h, aheadPos.z);
-                    square.quaternion.multiply(flatFlip); 
+                    square.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,0,1), -Math.PI/2)); 
                 }
-
-                // 4. POSITION PIG (Exactly on the Rail center)
                 pig.position.set(railPos.x, h + 0.35, railPos.z);
                 pig.lookAt(aheadPos.x, h + 0.35, aheadPos.z);
-
-                if (t >= 1) return true;
-                return false;
+                return t >= 1;
             },
             finish: resolve
         });
     });
 
-    // EXIT LOGIC
-    // --- UPDATED EXIT LOGIC (Replenish System) ---
-if (square) {
-    const exitPos = new THREE.Vector3(-4.5, h, 2.5); // Point toward the edge
-    
-    // Slide it out of the treadmill view then destroy it
-    tweenPosition(square, square.position.clone(), exitPos, 300).then(() => {
-        scene.remove(square); // Clean up the clone from the scene
-        // Dispose memory
-        square.traverse(n => {
-            if (n.isMesh) {
-                if (n.geometry) n.geometry.dispose();
-                if (n.material) n.material.dispose();
-            }
+    // STEP 2: REMOVE TRANSPORT SQUARE
+    if (square) {
+        tweenPosition(square, square.position.clone(), new THREE.Vector3(-4.5, h, 2.5), 300).then(() => {
+            scene.remove(square);
+            square.traverse(n => { if (n.geometry) n.geometry.dispose(); if (n.material) n.material.dispose(); });
         });
-    });
-}
+    }
 
+    // STEP 3: THE SIT JUMP
     const pFinal = new THREE.Vector3(targetTile.position.x, 0.3, targetTile.position.z);
     pig.rotation.y = Math.PI / 2; 
     await jumpToPoint(pig, pFinal, 700);
 
+    // LANDED STATUS
     pig.userData.onTile = true;
     pig.userData.moving = false;
     updateTileAppearance(pig.userData.currentTileIndex, pig.userData.colorName);
+
+    // --- STEP 4: BOARD FULL (FAIL) DETECTION ---
+    // Look at occupancy list
+    if (tileOccupancy.indexOf(null) === -1) {
+        // If board is logically full, wait until this final pig has finished landing
+        const allSet = tileOccupancy.every(p => p && p.userData.onTile === true);
+        if (allSet) {
+            triggerFailSequence();
+        }
+    }
+}
+
+
+function animateSingleTileWarning(tile) {
+    const frame = tile.userData.warningFrame;
+    if (!frame) return;
+
+    // Pulse Animation (Solid Red to Transparent and back)
+    addAnim({
+        elapsed: 0, duration: 1000, 
+        update(dt) {
+            this.elapsed += dt;
+            const t = this.elapsed / this.duration;
+            
+            // "Natural Blink": Starts red, fades out smoothly
+            // To loop 2 times, we use PI * 4
+            frame.material.opacity = Math.abs(Math.sin(t * Math.PI * 4)) * 0.7;
+
+            if (t >= 1) {
+                frame.material.opacity = 0; // Ensure clean hide
+                return true;
+            }
+            return false;
+        }
+    });
+}
+
+function triggerFailSequence() {
+    if (gameEnded) return;
+
+    // 1. Natural Pulse Animation on all tiles simultaneously
+    tiles.forEach(tile => {
+        const frame = tile.userData.warningFrame;
+        if (!frame) return;
+
+        addAnim({
+            elapsed: 0, duration: 1600, // 1.6 second alert
+            update(dt) {
+                this.elapsed += dt;
+                const t = this.elapsed / this.duration;
+                // Blinks 4 times using Sine wave (opacity from 0 to 0.7)
+                frame.material.opacity = Math.abs(Math.sin(t * Math.PI * 4)) * 0.7;
+                return t >= 1;
+            }
+        });
+    });
+
+    // 2. Trigger EndScreen after delay (Allows player to realize they failed)
+    setTimeout(() => {
+        triggerCTA(); 
+    }, 1800);
 }
 
   function onPointerDown(event) {
@@ -1896,6 +1951,7 @@ function shiftColumnForward(vacatedRow, col) {
             camera.aspect = container.clientWidth / container.clientHeight;
             camera.updateProjectionMatrix();
             renderer.setSize(container.clientWidth, container.clientHeight);
+            updateSlotCounterUI();
         }
         window.addEventListener('resize', onWindowResize);
         window.addEventListener('orientationchange', onWindowResize);
