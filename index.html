@@ -76,6 +76,17 @@
     50% { transform: scale(0.85) translateY(20px); }
 }
 
+/* Pulsing Text Animation */
+@keyframes textScale {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.15); } /* Grows 15% larger */
+}
+
+.pulsing-text {
+    display: inline-block; /* Required for scaling */
+    animation: textScale 1.2s infinite ease-in-out;
+}
+
 
 #slot-counter {
     position: absolute;
@@ -117,7 +128,10 @@
 </div>
 
 <div id="instruction-top" style="position: absolute; top: 2%; width: 100%; text-align: center; pointer-events: none; z-index: 500; transition: opacity 0.3s;">
-    <div style="color: white; font-weight: bold; font-size: 32px; text-shadow: 3px 3px 6px rgba(0,0,0,0.8); font-family: 'Arial Black', sans-serif;">TAP TO SHOOT</div>
+    <!-- Add the class here -->
+    <div class="pulsing-text" style="color: white; font-weight: bold; font-size: 32px; text-shadow: 3px 3px 6px rgba(0,0,0,0.8); font-family: 'Arial Black', sans-serif;">
+        TAP TO SHOOT
+    </div>
 </div>
 
 <div id="hand-guide-container" style="position: absolute; bottom: 16%; left: 60%; transform: translateX(-50%); pointer-events: none; z-index: 500; transition: opacity 0.3s;">
@@ -1563,7 +1577,7 @@ function buildIndustrialPath() {
     characterPathRail = new THREE.CatmullRomCurve3([
         new THREE.Vector3(-2.0, h, 0.7),    // START: Entry (centered bottom)
         new THREE.Vector3(2, h, 0.7),       // Mid-entry point for smooth start
-        new THREE.Vector3(3.0, h, 0.51),     // Front-Right corner (centered)
+        new THREE.Vector3(3.1, h, 0.51),     // Front-Right corner (centered)
         new THREE.Vector3(3.0, h, -5.8),    // Back-Right corner (centered)
         new THREE.Vector3(0, h, -6.2),      // Mid-back point
         new THREE.Vector3(-3.0, h, -5.8),   // Back-Left corner (centered)
@@ -1572,6 +1586,36 @@ function buildIndustrialPath() {
 
     // This makes the corners round and natural, exactly like the metal track
     characterPathRail.curveType = 'centripetal';
+}
+
+let treadmillArrows = []; 
+const arrowSpeed = 0.00003; // Velocity of the conveyor belt
+const arrowCount = 35;      // High density for that "flowing" look
+
+function initConveyorArrows() {
+    const loader = new THREE.TextureLoader();
+    loader.load('Arrow.png', (texture) => {
+        // Size and material setup for high-quality visibility
+        const arrowGeom = new THREE.PlaneGeometry(0.8, 0.8);
+        const arrowMat = new THREE.MeshBasicMaterial({ 
+            map: texture, 
+            transparent: true, 
+            opacity: 0.5,
+            depthWrite: false, 
+            polygonOffset: true,           // Ensures arrow draws above belt
+            polygonOffsetFactor: -400, 
+            polygonOffsetUnits: -4,
+            side: THREE.DoubleSide
+        });
+
+        for (let i = 0; i < arrowCount; i++) {
+            const arrowMesh = new THREE.Mesh(arrowGeom, arrowMat);
+            // Space them out evenly by giving them a staggered start position (0.0 to 1.0)
+            arrowMesh.userData.progress = i / arrowCount; 
+            scene.add(arrowMesh);
+            treadmillArrows.push(arrowMesh);
+        }
+    });
 }
 
 function createFakeBeltMesh() {
@@ -1617,8 +1661,9 @@ function createFakeBeltMesh() {
         
     });
     const pathLine = new THREE.Line(lineGeometry, lineMaterial);
-    pathLine.position.y = -10; // Slightly above the belt surface
+    pathLine.position.y = -100; // Slightly above the belt surface
     scene.add(pathLine);
+     initConveyorArrows();
 }
 
 async function performMillTravel(pig, targetTile) {
@@ -1961,6 +2006,37 @@ function shiftColumnForward(vacatedRow, col) {
  function animate() {
     requestAnimationFrame(animate);
     const dt = Math.min(clock.getDelta() * 1000, 40);
+
+     if (treadmillArrows.length > 0 && characterPathRail) {
+        const arrowSurfaceY = 0.88; // Floating height just above the belt
+        const m4 = new THREE.Matrix4();
+        const worldUp = new THREE.Vector3(0, 1, 0); // Keep them flat relative to sky
+
+        treadmillArrows.forEach(arrow => {
+            // 1. Advance movement
+            arrow.userData.progress += (dt * arrowSpeed);
+            if (arrow.userData.progress > 1) arrow.userData.progress -= 1; // Infinite loop
+            
+            // 2. Sample the path for position and direction
+            const prog = arrow.userData.progress;
+            const pos = characterPathRail.getPointAt(prog);
+            const ahead = characterPathRail.getPointAt(Math.min(prog + 0.002, 1)); 
+
+            // 3. Set exact position
+            arrow.position.set(pos.x, arrowSurfaceY, pos.z);
+            
+            // 4. Calculate Turn (Face direction of movement)
+            const tangent = new THREE.Vector3().subVectors(ahead, pos).normalize();
+            
+            // 5. Matrix Rotation: This locks the image perfectly parallel to the floor
+            m4.lookAt(tangent, new THREE.Vector3(0,1,0), worldUp);
+            arrow.quaternion.setFromRotationMatrix(m4);
+            
+            // 6. Rotate locally so the plane lies flat
+            arrow.rotation.x = Math.PI / 2;
+        });
+    }
+
 
     if (!gameEnded) {
         const currentTime = Date.now();
