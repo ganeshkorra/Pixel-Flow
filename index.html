@@ -231,6 +231,14 @@ window.game_object = {
             data: "#"
         }
     },
+
+     Audio: {
+        TapSound: { name: "Tap Sound", data: "game\\tap.mp3" },
+        ShotSound: { name: "Shot Sound", data: "game\\shot.mp3" },
+        AlertSound: { name: "Alert Sound", data: "game\\alert.mp3" },
+        WrongSound: { name: "Wrong Tap Sound", data: "game\\wrong_tap.mp3" },
+        Bgm: { name: "Background Music", data: "game\\bgm.mp3" }
+    },
         
 Ui: {
      HandSprite: { data: "BubbleIdle.png" }
@@ -397,6 +405,10 @@ initCTA();
 function triggerCTA() {
     if (gameEnded) return;
     gameEnded = true;
+     if (bgmAudio) {
+        bgmAudio.pause();
+        bgmAudio = null;
+    }
     document.getElementById('cta-overlay').style.display = 'flex';
 }
 
@@ -1234,7 +1246,7 @@ function getMouthPosition(pig) {
 
 // Visual glowing "Pop" when firing
 function createMuzzleFlash(pos) {
-    const flashGeom = new THREE.SphereGeometry(0.35, 12, 12);
+    const flashGeom = new THREE.SphereGeometry(0, 0, 0);
     const flashMat = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.8 });
     const flash = new THREE.Mesh(flashGeom, flashMat);
     flash.position.copy(pos);
@@ -1494,9 +1506,11 @@ async function shootAtCubes(pig) {
         });
 
         if (target) {
+           
             // PRECISION TIMING: Mark cube as "gone" immediately for other pigs
             const targetRef = target.cube;
             cubesToSmash.splice(target.index, 1);
+             playSFX('ShotSound');
             
             // Trigger character effects
             applyRecoil(pig);                      // 1. Character Kickback
@@ -1576,7 +1590,7 @@ function buildIndustrialPath() {
     const h = 0.81; // The surface height of the treadmill belt
     characterPathRail = new THREE.CatmullRomCurve3([
         new THREE.Vector3(-2.0, h, 0.7),    // START: Entry (centered bottom)
-        new THREE.Vector3(2, h, 0.7),       // Mid-entry point for smooth start
+        new THREE.Vector3(2.2, h, 0.7),       // Mid-entry point for smooth start
         new THREE.Vector3(3.1, h, 0.51),     // Front-Right corner (centered)
         new THREE.Vector3(3.0, h, -5.8),    // Back-Right corner (centered)
         new THREE.Vector3(0, h, -6.2),      // Mid-back point
@@ -1595,23 +1609,22 @@ const arrowCount = 35;      // High density for that "flowing" look
 function initConveyorArrows() {
     const loader = new THREE.TextureLoader();
     loader.load('Arrow.png', (texture) => {
-        // Size and material setup for high-quality visibility
         const arrowGeom = new THREE.PlaneGeometry(0.8, 0.8);
         const arrowMat = new THREE.MeshBasicMaterial({ 
             map: texture, 
             transparent: true, 
-            opacity: 0.5,
-            depthWrite: false, 
-            polygonOffset: true,           // Ensures arrow draws above belt
-            polygonOffsetFactor: -400, 
-            polygonOffsetUnits: -4,
+            opacity: 0.3,
+            depthWrite: true,            // RE-ENABLE Depth writing
+            polygonOffset: true,           
+            polygonOffsetFactor: -1,     // REDUCE from -100 to -1
+            polygonOffsetUnits: -1,
             side: THREE.DoubleSide
         });
 
         for (let i = 0; i < arrowCount; i++) {
             const arrowMesh = new THREE.Mesh(arrowGeom, arrowMat);
-            // Space them out evenly by giving them a staggered start position (0.0 to 1.0)
             arrowMesh.userData.progress = i / arrowCount; 
+            arrowMesh.renderOrder = -1; // ENSURE arrows are rendered BEFORE the char
             scene.add(arrowMesh);
             treadmillArrows.push(arrowMesh);
         }
@@ -1756,6 +1769,7 @@ function animateSingleTileWarning(tile) {
 
 function triggerFailSequence() {
     if (gameEnded) return;
+    playSFX('AlertSound');
 
     // 1. Natural Pulse Animation on all tiles simultaneously
     tiles.forEach(tile => {
@@ -1780,6 +1794,26 @@ function triggerFailSequence() {
     }, 1800);
 }
 
+let bgmAudio = null;
+
+function playSFX(key) {
+    const audioData = window.game_object.Audio[key];
+    if (audioData) {
+        const snd = new Audio(audioData.data);
+        snd.volume = 1.0;
+        snd.play().catch(e => console.warn("Audio playback blocked", e));
+    }
+}
+
+function startBGM() {
+    if (!bgmAudio) {
+        bgmAudio = new Audio(window.game_object.Audio.Bgm.data);
+        bgmAudio.loop = true;
+        bgmAudio.volume = 0.5; // Music usually quieter than effects
+        bgmAudio.play().catch(e => console.warn("BGM blocked", e));
+    }
+}
+
   function onPointerDown(event) {
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -1800,6 +1834,12 @@ function triggerFailSequence() {
     }
 
     if (!Char || Char.userData.moving) return;
+    // --- START BGM ON FIRST INTERACTION ---
+    startBGM();
+    
+    // --- TRIGGER 1: TAP SOUND ---
+    playSFX('TapSound');
+
 lastInteractionTime = Date.now(); 
 clearTutorial(); // Hide it for now
  if (!isTimerActive) {
@@ -1838,6 +1878,7 @@ startTimerOnInteraction(); // TRIGGER TIMER HERE
         // ETHIC 1: THE CAPACITY CHECK
         // If there is no space (no 'null' in tileOccupancy), grid Chars are LOCKED
         if (nextAvailableSlot === -1) {
+             playSFX('WrongSound');
             console.log("WAIT: The tiles are at capacity!");
             shakeChar(Char); // Feedback wiggle
             return; 
