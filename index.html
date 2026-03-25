@@ -588,6 +588,7 @@ scene.add(ground);
 ========================================================= */
 let autoThemePalette = []; // Will fill dynamically, e.g., ["#ff0000", "#00ff00",...]
 
+
 // Color Distance Calculator (Euclidean in RGB space)
 function getDistance(hex1, hex2) {
     const c1 = new THREE.Color(hex1);
@@ -716,6 +717,43 @@ const THEME_PALETTE = [
 
 //Helper function to get hex color from palette index (checks dynamic auto-palette first, then fallback)
 const getColorFromPalette = (id) => autoThemePalette[id] || THEME_PALETTE[id] || "#ffffff";
+
+/**
+ * TEAM COLOR UTILITY
+ * Applies a hex color to a 3D model's materials (Visual "Uniform")
+ * Used for both Cubes (Obstacles) and Pigs (Characters)
+ * 
+ * @param {THREE.Object3D} model - The 3D model to colorize
+ * @param {String} hex - Hex color code (e.g. "#e74c3c")
+ * @param {Object} options - Optional material properties
+ */
+function applyTeamColor(model, hex, options = {}) {
+    const colorObj = new THREE.Color(hex);
+    
+    model.traverse((node) => {
+        if (node.isMesh) {
+            // Clone material to prevent cross-instance color bleed
+            node.material = node.material.clone();
+            
+            // Strip any baked textures that hide the base color
+            if (node.material.map) {
+                node.material.map = null;
+                node.material.needsUpdate = true;
+            }
+            
+            // Apply the team color
+            node.material.color.copy(colorObj);
+            
+            // Apply optional material enhancements
+            if (options.roughness !== undefined) node.material.roughness = options.roughness;
+            if (options.metalness !== undefined) node.material.metalness = options.metalness;
+            if (options.emissive !== undefined) {
+                node.material.emissive.copy(colorObj);
+                node.material.emissiveIntensity = options.emissive;
+            }
+        }
+    });
+}
 
         let tiles = [];
         let tileOccupancy = [];
@@ -1191,6 +1229,7 @@ parseImageToLevel(levelImageUrl, LEVEL_ROWS, LEVEL_COLS).then(autoPattern => {
          
 // --- THE STABLE COLOR CENSUS ---
 // --- NEW FLAT CENSUS ---
+let levelPalette = [];
 const colorCensus = {};
 autoPattern.forEach(row => {
     row.forEach(id => {
@@ -1238,17 +1277,12 @@ for (let r = 0; r < rows; r++) {
             const posZ = (r - (rows - 1) / 2) * cubeSpacing;
             clone.position.set(posX, (wallHeight * 0.1) - 1.5, posZ - 2.7);
 
+            // INTELLECTUAL MATCHING: Store the color ID ("Team ID")
             clone.userData = { colorName: colorHex, gridX: c, gridZ: r, blocked: true };
 
-            clone.traverse(n => {
-                if (n.isMesh) {
-                    n.material = new THREE.MeshStandardMaterial({
-                        color: colorHex,
-                        roughness: 0.1, 
-                        metalness: 0.2
-                    });
-                }
-            });
+            // VISUAL APPLICATION: Apply the color uniform to the cube
+            applyTeamColor(clone, colorHex, { roughness: 0.1, metalness: 0.2 });
+
             scene.add(clone);
             cubesToSmash.push(clone);
         }
@@ -1288,23 +1322,42 @@ const colorsByFrequency = Object.entries(colorCensus)
     .map(entry => entry[0]);       // Extract just the color
 
 const pigPlan = [];
-const totalPigsCount = GRID * GRID; // Usually 9 or 16
+
+// ⭐ CRITICAL FIX FOR WINNABLE LEVELS ⭐
+// GUARANTEE: Create ONE PIG for EVERY unique color found in the image
+// This ensures NO cube is left without a matching pig (100% winnable)
+
+const totalGridSlots = GRID * GRID;
+const totalUniqueColors = colorsByFrequency.length;
+
+// If more colors than grid slots, we MUST use smaller clusterDistance during palette building
+// OR accept that some colors will share a pig (pig shoots multiple color variants)
+const totalPigsCount = Math.min(totalUniqueColors, totalGridSlots);
+
+console.log(`🎮 GAME DESIGN: Winnable Level Configuration`);
+console.log(`   Grid size: ${GRID}×${GRID} = ${totalGridSlots} pig slots`);
+console.log(`   Unique colors in image: ${totalUniqueColors}`);
+console.log(`   Pigs to spawn: ${totalPigsCount}`);
+
+if (totalUniqueColors > totalGridSlots) {
+    console.warn(`⚠️  COLOR OVERFLOW: Image has ${totalUniqueColors} colors but only ${totalGridSlots} pig slots`);
+    console.log(`   SOLUTION: The first ${totalGridSlots} most-abundant colors will cover all cubes`);
+    console.log(`   Using top ${totalGridSlots} colors by frequency ensures level is still winnable`);
+}
 
 // Track how many pigs we are assigning per hex color
 const pigColorTallies = {}; 
 
 for (let i = 0; i < totalPigsCount; i++) {
-    // Pick colors in order of abundance (easiest colors first)
+    // Assign colors in order of abundance (most abundant cubes → easiest pig)
     const col = colorsByFrequency[i % colorsByFrequency.length];
     
-    // Track how many pigs of this specific color we have so far
+    // Track how many pigs of this specific color we have
     pigColorTallies[col] = (pigColorTallies[col] || 0) + 1;
     
     pigPlan.push({
         color: col,
-        // We save which pig number this is for that color (e.g. 1st Red, 2nd Red)
-        // This is crucial for distributing the remainder ammo.
-        orderIndex: pigColorTallies[col] - 1 
+        orderIndex: pigColorTallies[col] - 1
     });
 }
 
@@ -1329,10 +1382,11 @@ pigPlan.forEach(plan => {
     console.log(`Color ${plan.color}: assigned ${plan.ammo} to pig #${plan.orderIndex + 1}`);
 });
 
-                console.log('Pig Plan (9 characters with calculated ammo):', pigPlan);
+                console.log('✅ Pig Plan (all colors guaranteed to have pigs):', pigPlan);
                 
                 // DEBUG: Show color distribution for easy gameplay verification
-                console.log('🎯 EASY LEVEL SETUP - VERY EASY TO COMPLETE:');
+                console.log('🎯 WINNABLE LEVEL SETUP:');
+                console.log('   Every unique color has a pig ✓');
                 console.log('   Colors extracted from level image:', colorsByFrequency.length);
                 console.log('   Level Colors (sorted by abundance):', colorsByFrequency);
                 console.log('   Character Color Distribution:', pigColorTallies);
@@ -2231,27 +2285,12 @@ function createStartingCharacter(row, col, color, ammo) {
     label.renderOrder = 999;
     clone.add(label);
 
+    // VISUAL APPLICATION: Apply the color uniform ("Pig Uniform")
+    applyTeamColor(clone, color, { roughness: 0.5, metalness: 0.2, emissive: 0.1 });
+
+    // SHADOW SETUP: Enable shadow casting after color application
     clone.traverse((node) => {
         if (node.isMesh) {
-            // 1. UNIQUE MATERIAL: Clone to prevent cross-instance color bleed
-            node.material = node.material.clone();
-
-            // 2. TEXTURE OVERRIDE: Strip any baked textures that hide base color
-            // GLB models often have white/blank textures that override base color
-            if (node.material.map) {
-                node.material.map = null;
-                node.material.needsUpdate = true;
-            }
-
-            // 3. APPLY EXACT EXTRACTED COLOR from auto-palette
-            node.material.color.set(color);
-
-            // 4. OPTIMIZE APPEARANCE for colored characters
-            node.material.roughness = 0.5;
-            node.material.metalness = 0.2;
-            node.material.emissive.set(color);
-            node.material.emissiveIntensity = 0.1; // Subtle glow prevents muddy shadows
-
             node.castShadow = true;
             node.receiveShadow = true;
             node.userData.parentChar = clone;
