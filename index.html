@@ -217,8 +217,8 @@
         // SpawnHeight: 85,
         // CubeSize: { width: 3, height:  7, depth: 3 },
         // Inside window.game_object.GameProperties
-LevelRow: { name: "Level Rows", amount: 35 , type: "Integer" },
-LevelCol: { name: "Level Columns", amount: 35 , type: "Integer" },
+LevelRow: { name: "Level Rows", amount: 3 , type: "Integer" },
+LevelCol: { name: "Level Columns", amount: 3 , type: "Integer" },
 
         GameDuration: { name: "Game duration", amount:  100, type: "Integer" },
         IdleHintDuration: { name: "Idle Hint Duration", amount: 8, type: "Integer" },
@@ -2350,7 +2350,7 @@ function createParticle(xSide, yPos, colors) {
         width: ${size};
         height: ${size};
         background: ${colors[Math.floor(Math.random() * colors.length)]};
-        left: ${xSide * 100}vw;
+        left: ${xSide * 90}vw;
         top: ${yPos * 100}vh;
         opacity: 1;
         z-index: 1000;
